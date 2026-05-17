@@ -80,6 +80,8 @@ CREATE TABLE IF NOT EXISTS user_window_offsets (
 `;
 
 export class SessionRegistry {
+  private readonly locks = new Map<string, Promise<unknown>>();
+
   constructor(private readonly db: Database.Database) {
     db.pragma("foreign_keys = ON");
     db.exec(SCHEMA_SQL);
@@ -267,5 +269,29 @@ export class SessionRegistry {
       )
       .get(userId, windowId) as { byte_offset: number } | undefined;
     return row?.byte_offset ?? null;
+  }
+
+  async withSessionLock<T>(
+    sessionId: string,
+    fn: (session: SessionRow) => Promise<T>
+  ): Promise<T> {
+    const prev = this.locks.get(sessionId) ?? Promise.resolve();
+    let resolveNext: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resolveNext = r;
+    });
+    // Replace the slot synchronously so following calls queue behind us.
+    this.locks.set(sessionId, gate);
+    try {
+      await prev;
+      const session = this.getSession(sessionId);
+      if (!session) {
+        throw new Error(`withSessionLock: session ${sessionId} not found`);
+      }
+      return await fn(session);
+    } finally {
+      resolveNext();
+      if (this.locks.get(sessionId) === gate) this.locks.delete(sessionId);
+    }
   }
 }
