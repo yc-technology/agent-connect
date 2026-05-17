@@ -1,0 +1,25 @@
+{
+  "name": "@agent-connect/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Connect management web console",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -p tsconfig.json && vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "preview": "vite preview --host 127.0.0.1"
+  },
+  "dependencies": {
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "zustand": "^5.0.9"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.2.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "vite": "^8.0.13"
+  }
+}

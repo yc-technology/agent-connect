@@ -1,0 +1,20 @@
+{
+  "name": "@agent-connect/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Connect command line tools",
+  "bin": {
+    "agc": "./dist/src/index.js"
+  },
+  "scripts": {
+    "dev": "pnpm --filter telegramify-markdown build && pnpm --filter @agent-connect/bot build && tsx src/index.ts start",
+    "start": "node dist/src/index.js start",
+    "hook:install": "pnpm build && node dist/src/index.js hook --install",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agent-connect/bot": "workspace:*"
+  }
+}

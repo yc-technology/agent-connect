@@ -1,0 +1,413 @@
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { SessionManager, WindowState } from "../src/agent-connect/session.js";
+
+function tmpDir(): string {
+  return mkdtempSync(join(tmpdir(), "agent-connect-session-test-"));
+}
+
+function makeManager(dir: string, loadState = false): SessionManager {
+  return new SessionManager({
+    config: {
+      stateFile: join(dir, "state.json"),
+      sessionMapFile: join(dir, "session_map.json"),
+      tmuxSessionName: "agent-connect",
+      claudeProjectsPath: join(dir, "projects"),
+      codexHomePath: join(dir, "codex"),
+      agentType: "claude"
+    },
+    loadState
+  });
+}
+
+function writeJsonlSession(projectsPath: string, cwd: string, sessionId: string, lines: unknown[]): string {
+  const manager = new SessionManager({
+    config: {
+      stateFile: join(projectsPath, "..", "state.json"),
+      sessionMapFile: join(projectsPath, "..", "session_map.json"),
+      tmuxSessionName: "agent-connect",
+      claudeProjectsPath: projectsPath,
+      codexHomePath: join(projectsPath, "..", "codex"),
+      agentType: "claude"
+    },
+    loadState: false
+  });
+  const projectDir = join(projectsPath, manager.encodeCwd(cwd));
+  mkdirSync(projectDir, { recursive: true });
+  const file = join(projectDir, `${sessionId}.jsonl`);
+  writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n") + "\n", "utf8");
+  return file;
+}
+
+function writeCodexSession(codexHomePath: string, cwd: string, sessionId: string, lines: unknown[]): string {
+  const sessionDir = join(codexHomePath, "sessions", "2026", "05", "17");
+  mkdirSync(sessionDir, { recursive: true });
+  const file = join(sessionDir, `rollout-2026-05-17T00-00-00-${sessionId}.jsonl`);
+  const sessionMeta = {
+    timestamp: "2026-05-17T00:00:00.000Z",
+    type: "session_meta",
+    payload: {
+      id: sessionId,
+      cwd,
+      base_instructions: "x".repeat(12_000)
+    }
+  };
+  writeFileSync(file, [sessionMeta, ...lines].map((line) => JSON.stringify(line)).join("\n") + "\n", "utf8");
+  mkdirSync(codexHomePath, { recursive: true });
+  writeFileSync(
+    join(codexHomePath, "session_index.jsonl"),
+    `${JSON.stringify({ id: sessionId, thread_name: "Codex summary", updated_at: "2026-05-17T00:00:01.000Z" })}\n`,
+    "utf8"
+  );
+  return file;
+}
+
+describe("WindowState", () => {
+  it("round trips through legacy state object format", () => {
+    const state = WindowState.fromDict({
+      session_id: "s1",
+      cwd: "/tmp/project",
+      window_name: "project"
+    });
+    expect(state.sessionId).toBe("s1");
+    expect(state.toDict()).toEqual({
+      session_id: "s1",
+      cwd: "/tmp/project",
+      window_name: "project"
+    });
+  });
+
+  it("defaults missing fields", () => {
+    expect(WindowState.fromDict({}).toDict()).toEqual({ session_id: "", cwd: "" });
+  });
+});
+
+describe("SessionManager thread and chat state", () => {
+  it("binds, resolves, iterates, and unbinds threads", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      manager.bindThread(100, 1, "@1");
+      manager.bindThread(100, 2, "@2");
+      manager.bindThread(200, 3, "@3");
+      manager.setTopicProbeMessageId(100, 1, 101);
+
+      expect(manager.getWindowForThread(100, 1)).toBe("@1");
+      expect(manager.resolveWindowForThread(100, null)).toBeNull();
+      expect(new Set(manager.iterThreadBindings())).toEqual(
+        new Set([
+          [100, 1, "@1"],
+          [100, 2, "@2"],
+          [200, 3, "@3"]
+        ])
+      );
+
+      expect(manager.unbindThread(100, 1)).toBe("@1");
+      expect(manager.getWindowForThread(100, 1)).toBeNull();
+      expect(manager.getTopicProbeMessageId(100, 1)).toBeNull();
+      expect(manager.unbindThread(100, 999)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("stores group chat ids independently", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      manager.setGroupChatId(100, 11, -111);
+      manager.setGroupChatId(100, 22, -222);
+      manager.setGroupChatId(200, 11, -333);
+
+      expect(manager.resolveChatId(100, 11)).toBe(-111);
+      expect(manager.resolveChatId(100, 22)).toBe(-222);
+      expect(manager.resolveChatId(200, 11)).toBe(-333);
+      expect(manager.resolveChatId(100, null)).toBe(100);
+      expect(manager.resolveChatId(100, 42)).toBe(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects non-forum thread ids for group chat id (private chat / General topic)", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      manager.setGroupChatId(100, 0, -999);
+      manager.setGroupChatId(100, 1, -888);
+      manager.setGroupChatId(100, null, -777);
+
+      expect(manager.groupChatIds).toEqual({});
+      expect(manager.resolveChatId(100, 0)).toBe(100);
+      expect(manager.resolveChatId(100, 1)).toBe(100);
+      expect(manager.resolveChatId(100, null)).toBe(100);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("strips polluted group_chat_ids entries on load (legacy state.json with userId:0)", () => {
+    const dir = tmpDir();
+    try {
+      const stateFile = join(dir, "state.json");
+      writeFileSync(
+        stateFile,
+        JSON.stringify({
+          group_chat_ids: {
+            "100:0": -111,
+            "100:1": -222,
+            "100:42": -333
+          }
+        })
+      );
+
+      const manager = makeManager(dir, true);
+      expect(manager.groupChatIds).toEqual({ "100:42": -333 });
+      expect(manager.resolveChatId(100, 0)).toBe(100);
+      expect(manager.resolveChatId(100, 1)).toBe(100);
+      expect(manager.resolveChatId(100, 42)).toBe(-333);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("tracks display names and window state", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      expect(manager.getDisplayName("@99")).toBe("@99");
+      manager.bindThread(100, 1, "@1", "proj");
+      expect(manager.getDisplayName("@1")).toBe("proj");
+
+      const state = manager.getWindowState("@1");
+      state.sessionId = "abc";
+      manager.updateDisplayName("@1", "new-proj");
+      expect(manager.getWindowState("@1").windowName).toBe("new-proj");
+
+      manager.clearWindowSession("@1");
+      expect(manager.getWindowState("@1").sessionId).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("checks tmux window id shape", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      expect(manager.isWindowId("@0")).toBe(true);
+      expect(manager.isWindowId("@12")).toBe(true);
+      expect(manager.isWindowId("myproject")).toBe(false);
+      expect(manager.isWindowId("@")).toBe(false);
+      expect(manager.isWindowId("@abc")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SessionManager persistence and session map", () => {
+  it("saves and loads legacy-compatible state JSON", () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      manager.bindThread(100, 42, "@3", "proj");
+      manager.setGroupChatId(100, 42, -100123);
+      manager.setTopicProbeMessageId(100, 42, 777);
+      manager.updateUserWindowOffset(100, "@3", 55);
+      manager.getWindowState("@3").sessionId = "sid";
+      manager.getWindowState("@3").cwd = "/tmp/project";
+      manager.saveState();
+
+      const raw = JSON.parse(readFileSync(join(dir, "state.json"), "utf8")) as {
+        window_states: Record<string, unknown>;
+        thread_bindings: Record<string, Record<string, string>>;
+        window_display_names: Record<string, string>;
+        topic_probe_message_ids: Record<string, number>;
+      };
+      expect(raw.window_states["@3"]).toMatchObject({
+        session_id: "sid",
+        cwd: "/tmp/project"
+      });
+      expect(raw.thread_bindings["100"]?.["42"]).toBe("@3");
+      expect(raw.window_display_names["@3"]).toBe("proj");
+      expect(raw.topic_probe_message_ids["100:42"]).toBe(777);
+
+      const loaded = makeManager(dir, true);
+      expect(loaded.getWindowForThread(100, 42)).toBe("@3");
+      expect(loaded.resolveChatId(100, 42)).toBe(-100123);
+      expect(loaded.getTopicProbeMessageId(100, 42)).toBe(777);
+      expect(loaded.userWindowOffsets[100]?.["@3"]).toBe(55);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads session_map entries and cleans stale window states", async () => {
+    const dir = tmpDir();
+    try {
+      writeFileSync(
+        join(dir, "session_map.json"),
+        JSON.stringify({
+          "agent-connect:@1": {
+            session_id: "s1",
+            cwd: "/tmp/project",
+            window_name: "proj"
+          },
+          "other:@2": {
+            session_id: "s2",
+            cwd: "/tmp/other"
+          }
+        }),
+        "utf8"
+      );
+      const manager = makeManager(dir);
+      manager.windowStates["@stale"] = new WindowState("old", "/old");
+      await manager.loadSessionMap();
+
+      expect(manager.getWindowState("@1")).toMatchObject({
+        sessionId: "s1",
+        cwd: "/tmp/project",
+        windowName: "proj"
+      });
+      expect(manager.windowStates["@stale"]).toBeUndefined();
+      expect(manager.getDisplayName("@1")).toBe("proj");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes session_map before resolving users for a session", async () => {
+    const dir = tmpDir();
+    try {
+      const projectsPath = join(dir, "projects");
+      const cwd = "/tmp/project";
+      const sessionId = "session-1";
+      writeJsonlSession(projectsPath, cwd, sessionId, [
+        { type: "user", message: { content: [{ type: "text", text: "hello" }] } },
+        { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }
+      ]);
+      writeFileSync(
+        join(dir, "session_map.json"),
+        JSON.stringify({
+          "agent-connect:@1": {
+            session_id: sessionId,
+            cwd,
+            window_name: "proj"
+          }
+        }),
+        "utf8"
+      );
+
+      const manager = makeManager(dir);
+      manager.bindThread(100, 0, "@1");
+
+      await expect(manager.findUsersForSession(sessionId)).resolves.toEqual([[100, "@1", 0]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SessionManager Claude session resolution", () => {
+  it("builds paths, reads summaries, lists sessions, and returns history", async () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      const projectsPath = join(dir, "projects");
+      const cwd = "/tmp/project";
+      const sessionId = "session-1";
+      const file = writeJsonlSession(projectsPath, cwd, sessionId, [
+        { type: "summary", summary: "Session summary" },
+        { type: "user", message: { content: [{ type: "text", text: "hello" }] } },
+        { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }
+      ]);
+
+      expect(manager.buildSessionFilePath(sessionId, cwd)).toBe(file);
+      const session = await manager.getSessionDirect(sessionId, cwd);
+      expect(session).toMatchObject({
+        sessionId,
+        summary: "Session summary",
+        messageCount: 3,
+        filePath: file
+      });
+
+      const sessions = await manager.listSessionsForDirectory(cwd);
+      expect(sessions.map((item) => item.sessionId)).toEqual([sessionId]);
+
+      const state = manager.getWindowState("@1");
+      state.sessionId = sessionId;
+      state.cwd = cwd;
+      const resolved = await manager.resolveSessionForWindow("@1");
+      expect(resolved?.sessionId).toBe(sessionId);
+
+      const [messages, total] = await manager.getRecentMessages("@1");
+      expect(total).toBe(2);
+      expect(messages.map((message) => message.text)).toEqual(["hello", "hi"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears stale window session when the file no longer exists", async () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      const state = manager.getWindowState("@1");
+      state.sessionId = "missing";
+      state.cwd = "/tmp/project";
+
+      await expect(manager.resolveSessionForWindow("@1")).resolves.toBeNull();
+      expect(manager.getWindowState("@1").sessionId).toBe("");
+      expect(manager.getWindowState("@1").cwd).toBe("");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("SessionManager Codex session resolution", () => {
+  it("lists Codex sessions for a directory", async () => {
+    const dir = tmpDir();
+    try {
+      const manager = makeManager(dir);
+      const cwd = "/tmp/project";
+      const sessionId = "019e3004-fe4c-7cc1-88a5-4d253ac1cf93";
+      const file = writeCodexSession(join(dir, "codex"), cwd, sessionId, [
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "hello codex" }]
+          }
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "hi" }]
+          }
+        }
+      ]);
+
+      const sessions = await manager.listSessionsForDirectory(cwd, "codex");
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]).toMatchObject({
+        sessionId,
+        summary: "Codex summary",
+        messageCount: 2,
+        filePath: file,
+        agentType: "codex"
+      });
+
+      const direct = await manager.getSessionDirect(sessionId, cwd, "codex");
+      expect(direct?.sessionId).toBe(sessionId);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -1,0 +1,25 @@
+.DS_Store
+
+# Environment
+.env
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ts/
+apps/*/dist/
+packages/*/dist/
+
+# Test / coverage output
+coverage/
+.coverage/
+.cache/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

@@ -1,0 +1,42 @@
+{
+  "name": "@agent-connect/bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agent Connect TypeScript bot and management API",
+  "main": "./dist/src/agent-connect/main.js",
+  "exports": {
+    ".": {
+      "types": "./src/agent-connect/main.ts",
+      "default": "./dist/src/agent-connect/main.js"
+    },
+    "./hook": {
+      "types": "./src/agent-connect/hook.ts",
+      "default": "./dist/src/agent-connect/hook.js"
+    },
+    "./service": {
+      "types": "./src/agent-connect/service.ts",
+      "default": "./dist/src/agent-connect/service.js"
+    }
+  },
+  "scripts": {
+    "dev": "tsx src/agent-connect/main.ts",
+    "start": "node dist/src/agent-connect/main.js",
+    "hook:install": "pnpm build && node dist/src/agent-connect/main.js hook --install",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:ts": "vitest run"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.8.5",
+    "grammy": "^1.43.0",
+    "sharp": "^0.34.5",
+    "telegramify-markdown": "workspace:*",
+    "undici": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  }
+}
