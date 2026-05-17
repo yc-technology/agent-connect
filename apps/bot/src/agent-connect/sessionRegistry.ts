@@ -172,4 +172,80 @@ export class SessionRegistry {
       .prepare("UPDATE sessions SET last_byte_offset = ? WHERE session_id = ?")
       .run(offset, sessionId);
   }
+
+  bindThread(userId: number, threadId: number, windowId: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO thread_bindings (user_id, thread_id, window_id, bound_at)
+           VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, thread_id) DO UPDATE SET
+           window_id = excluded.window_id,
+           bound_at = excluded.bound_at`
+      )
+      .run(userId, threadId, windowId, Date.now());
+  }
+
+  unbindThread(userId: number, threadId: number): string | null {
+    const row = this.db
+      .prepare("SELECT window_id FROM thread_bindings WHERE user_id = ? AND thread_id = ?")
+      .get(userId, threadId) as { window_id: string } | undefined;
+    if (!row) return null;
+    this.db
+      .prepare("DELETE FROM thread_bindings WHERE user_id = ? AND thread_id = ?")
+      .run(userId, threadId);
+    return row.window_id;
+  }
+
+  resolveWindowForThread(userId: number, threadId: number): string | null {
+    const row = this.db
+      .prepare("SELECT window_id FROM thread_bindings WHERE user_id = ? AND thread_id = ?")
+      .get(userId, threadId) as { window_id: string } | undefined;
+    return row?.window_id ?? null;
+  }
+
+  *iterThreadBindings(): IterableIterator<[number, number, string]> {
+    const rows = this.db
+      .prepare(
+        "SELECT user_id, thread_id, window_id FROM thread_bindings ORDER BY user_id, thread_id"
+      )
+      .all() as Array<{ user_id: number; thread_id: number; window_id: string }>;
+    for (const r of rows) yield [r.user_id, r.thread_id, r.window_id];
+  }
+
+  setGroupChatId(userId: number, threadId: number, chatId: number): void {
+    this.db
+      .prepare(
+        `UPDATE thread_bindings SET group_chat_id = ?
+           WHERE user_id = ? AND thread_id = ?`
+      )
+      .run(chatId, userId, threadId);
+  }
+
+  resolveChatId(userId: number, threadId: number | null): number {
+    if (threadId === null) return userId;
+    const row = this.db
+      .prepare(
+        "SELECT group_chat_id FROM thread_bindings WHERE user_id = ? AND thread_id = ? AND group_chat_id IS NOT NULL"
+      )
+      .get(userId, threadId) as { group_chat_id: number } | undefined;
+    return row?.group_chat_id ?? userId;
+  }
+
+  setTopicProbeMessageId(userId: number, threadId: number, messageId: number): void {
+    this.db
+      .prepare(
+        `UPDATE thread_bindings SET topic_probe_message_id = ?
+           WHERE user_id = ? AND thread_id = ?`
+      )
+      .run(messageId, userId, threadId);
+  }
+
+  getTopicProbeMessageId(userId: number, threadId: number): number | null {
+    const row = this.db
+      .prepare(
+        "SELECT topic_probe_message_id FROM thread_bindings WHERE user_id = ? AND thread_id = ?"
+      )
+      .get(userId, threadId) as { topic_probe_message_id: number | null } | undefined;
+    return row?.topic_probe_message_id ?? null;
+  }
 }

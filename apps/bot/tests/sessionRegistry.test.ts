@@ -125,3 +125,63 @@ describe("SessionRegistry sessions", () => {
     expect(reg.getSession("S1")?.last_byte_offset).toBe(4096);
   });
 });
+
+describe("SessionRegistry bindings", () => {
+  test("bindThread + resolveWindowForThread round trip", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.bindThread(123, 42, "@0");
+    expect(reg.resolveWindowForThread(123, 42)).toBe("@0");
+  });
+
+  test("unbindThread removes binding", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.bindThread(123, 42, "@0");
+    expect(reg.unbindThread(123, 42)).toBe("@0");
+    expect(reg.resolveWindowForThread(123, 42)).toBeNull();
+  });
+
+  test("iterThreadBindings enumerates all", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.upsertWindow("@1", "y", "/b");
+    reg.bindThread(1, 10, "@0");
+    reg.bindThread(2, 20, "@1");
+    const got = [...reg.iterThreadBindings()].sort();
+    expect(got).toEqual([
+      [1, 10, "@0"],
+      [2, 20, "@1"]
+    ]);
+  });
+
+  test("setGroupChatId + resolveChatId", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.bindThread(123, 42, "@0");
+    reg.setGroupChatId(123, 42, -100200300);
+    expect(reg.resolveChatId(123, 42)).toBe(-100200300);
+  });
+
+  test("resolveChatId falls back to userId when no group binding", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    expect(reg.resolveChatId(123, 42)).toBe(123);
+    expect(reg.resolveChatId(123, null)).toBe(123);
+  });
+
+  test("topic probe message id round trip", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.bindThread(123, 42, "@0");
+    reg.setTopicProbeMessageId(123, 42, 9001);
+    expect(reg.getTopicProbeMessageId(123, 42)).toBe(9001);
+  });
+
+  test("deleteWindow cascades to thread_bindings", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.bindThread(1, 10, "@0");
+    reg.deleteWindow("@0");
+    expect(reg.resolveWindowForThread(1, 10)).toBeNull();
+  });
+});
