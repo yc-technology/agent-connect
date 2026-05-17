@@ -54,14 +54,18 @@ export class HookRouter {
     const { registry } = this.deps;
     const { payload } = envelope;
     registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
-    registry.registerSession({
+    const args = {
       sessionId: payload.session_id,
       windowId: envelope.window_id,
       agentType: this.deps.agentType,
       transcriptPath: payload.transcript_path ?? "",
-      cwd: payload.cwd,
-      source: typeof payload.source === "string" ? payload.source : undefined
-    });
+      cwd: payload.cwd
+    } as const;
+    if (typeof payload.source === "string") {
+      registry.registerSession({ ...args, source: payload.source });
+    } else {
+      registry.registerSession(args);
+    }
   }
 
   private async onDrain(envelope: HookEnvelope): Promise<void> {
