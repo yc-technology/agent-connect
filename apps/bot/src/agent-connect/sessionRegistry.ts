@@ -248,4 +248,24 @@ export class SessionRegistry {
       .get(userId, threadId) as { topic_probe_message_id: number | null } | undefined;
     return row?.topic_probe_message_id ?? null;
   }
+
+  updateUserWindowOffset(userId: number, windowId: string, offset: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO user_window_offsets (user_id, window_id, byte_offset)
+           VALUES (?, ?, ?)
+         ON CONFLICT(user_id, window_id) DO UPDATE SET
+           byte_offset = excluded.byte_offset`
+      )
+      .run(userId, windowId, offset);
+  }
+
+  getUserWindowOffset(userId: number, windowId: string): number | null {
+    const row = this.db
+      .prepare(
+        "SELECT byte_offset FROM user_window_offsets WHERE user_id = ? AND window_id = ?"
+      )
+      .get(userId, windowId) as { byte_offset: number } | undefined;
+    return row?.byte_offset ?? null;
+  }
 }

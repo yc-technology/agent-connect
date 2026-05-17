@@ -185,3 +185,27 @@ describe("SessionRegistry bindings", () => {
     expect(reg.resolveWindowForThread(1, 10)).toBeNull();
   });
 });
+
+describe("SessionRegistry user_window_offsets", () => {
+  test("updateUserWindowOffset round trip", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.updateUserWindowOffset(123, "@0", 4096);
+    expect(reg.getUserWindowOffset(123, "@0")).toBe(4096);
+    reg.updateUserWindowOffset(123, "@0", 8192);
+    expect(reg.getUserWindowOffset(123, "@0")).toBe(8192);
+  });
+
+  test("getUserWindowOffset returns null when absent", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    expect(reg.getUserWindowOffset(123, "@0")).toBeNull();
+  });
+
+  test("deleteWindow cascades to user_window_offsets", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.updateUserWindowOffset(123, "@0", 4096);
+    reg.deleteWindow("@0");
+    expect(reg.getUserWindowOffset(123, "@0")).toBeNull();
+  });
+});
