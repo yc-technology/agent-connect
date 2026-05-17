@@ -9,7 +9,35 @@ import {
 } from "./botConfig.js";
 import type { SqliteConfigStore } from "./configStore.js";
 import type { BotRuntimeStatus } from "./multiBotRuntime.js";
+import type { HookRouter } from "./hookRouter.js";
+import type { HookEnvelope } from "./hookTypes.js";
 import { proxyConfigLabel, readHttpProxyConfig } from "./proxy.js";
+
+export type HookRouterLookup = (tmuxSession: string) => HookRouter | null;
+
+export function registerHookEndpoint(fastify: FastifyInstance, lookup: HookRouterLookup): void {
+  fastify.post("/hook/events", async (req, reply) => {
+    const body = req.body as Partial<HookEnvelope> | undefined;
+    if (
+      !body ||
+      typeof body.tmux_session !== "string" ||
+      typeof body.window_id !== "string" ||
+      typeof body.window_name !== "string" ||
+      typeof body.payload !== "object" ||
+      body.payload === null
+    ) {
+      return reply.code(400).send({ error: "invalid envelope" });
+    }
+    const router = lookup(body.tmux_session);
+    if (router) {
+      const env = body as HookEnvelope;
+      setImmediate(() => {
+        router.dispatch(env).catch((err) => console.warn("[hookEndpoint]", err));
+      });
+    }
+    return reply.code(202).send();
+  });
+}
 
 export interface RuntimeState {
   startedAt: string;
