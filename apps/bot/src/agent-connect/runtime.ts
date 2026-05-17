@@ -1,9 +1,11 @@
 import { stat } from "node:fs/promises";
 import { buildResponseParts } from "./responseBuilder.js";
 import type { Config } from "./config.js";
+import type { NewMessageLike } from "./drainTranscript.js";
 import { MessageQueueManager } from "./messageQueue.js";
-import type { NewMessage, SessionMonitor } from "./sessionMonitor.js";
 import type { SessionManager } from "./session.js";
+
+export type NewMessage = NewMessageLike;
 
 export interface RuntimeDeps {
   config: Pick<Config, "showToolCalls" | "showUserMessages">;
@@ -61,8 +63,4 @@ export async function handleNewMessage(msg: NewMessage, deps: RuntimeDeps): Prom
 
 function isIntermediateContent(contentType: string): boolean {
   return INTERMEDIATE_CONTENT_TYPES.has(contentType);
-}
-
-export function wireMonitorToQueue(monitor: SessionMonitor, deps: RuntimeDeps): void {
-  monitor.setMessageCallback((message) => handleNewMessage(message, deps));
 }

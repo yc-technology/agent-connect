@@ -4,7 +4,12 @@ import type { SessionRegistry, SessionRow } from "./sessionRegistry.js";
 
 export interface NewMessageLike {
   sessionId: string;
-  windowId: string;
+  /**
+   * Always set by `drainTranscript` (sourced from `SessionRow.window_id`).
+   * Marked optional so the type also satisfies callers that need to express
+   * "no window" states (e.g. legacy `handleNewMessage` guards).
+   */
+  windowId?: string | null;
   text: string;
   isComplete: boolean;
   contentType: string;

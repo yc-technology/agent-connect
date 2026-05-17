@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { handleNewMessage } from "../src/agent-connect/runtime.js";
-import type { NewMessage } from "../src/agent-connect/sessionMonitor.js";
+import type { NewMessage } from "../src/agent-connect/runtime.js";
 
 function baseMessage(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
