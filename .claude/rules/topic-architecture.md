@@ -9,65 +9,66 @@ The bot operates exclusively in Telegram Forum (topics) mode. There is **no** `a
 │  Topic ID   │ ───▶ │ Window ID   │ ───▶ │ Session ID  │
 │  (Telegram) │      │ (tmux @id)  │      │  (Claude)   │
 └─────────────┘      └─────────────┘      └─────────────┘
-     thread_bindings      session_map.json
-     (state.json)         (written by hook)
+   thread_bindings    sessions table
+   (SQLite)           (SQLite, UNIQUE on window_id)
 ```
 
-Window IDs (e.g. `@0`, `@12`) are guaranteed unique within a tmux server session. Window names are stored separately as display names (`window_display_names` map).
+Window IDs (e.g. `@0`, `@12`) are guaranteed unique within a tmux server session. Window names are kept in the `windows` table as `display_name`.
 
-## Mapping 1: Topic → Window ID (thread_bindings)
+## Mapping 1: Topic → Window ID (`thread_bindings` table)
 
-```ts
-// session.ts: SessionManager
-threadBindings: Record<number, Record<number, string>>;
-windowDisplayNames: Record<string, string>;
+```sql
+SELECT window_id FROM thread_bindings WHERE user_id = ? AND thread_id = ?;
 ```
 
-- Storage: memory + `state.json`
-- Written when: user creates a new session via the directory browser in a topic
-- Purpose: route user messages to the correct tmux window
+- Storage: `bots/<id>/bot.sqlite`. `SessionManager` still owns the in-memory mirror and writes to this table (via `state.json` write-through until PR-removes-session.ts lands).
+- Written when: user creates a new session via the directory browser in a topic.
+- Purpose: route user messages to the correct tmux window.
 
-## Mapping 2: Window ID → Session (session_map.json)
+## Mapping 2: Window ID → Session (`sessions` table)
 
-```json
-# session_map.json (key format: "tmux_session:window_id")
-{
-  "agent-connect:@0": {"session_id": "uuid-xxx", "cwd": "/path/to/project", "window_name": "project"},
-  "agent-connect:@5": {"session_id": "uuid-yyy", "cwd": "/path/to/project", "window_name": "project-2"}
-}
+```sql
+-- UNIQUE INDEX idx_sessions_window enforces 1 live session per window
+SELECT session_id, transcript_path, last_byte_offset FROM sessions WHERE window_id = ?;
 ```
 
-- Storage: `session_map.json`
-- Written when: Claude Code's `SessionStart` hook fires
-- Property: one window maps to one session; session_id changes after `/clear`
-- Purpose: SessionMonitor uses this mapping to decide which sessions to watch
+- Storage: `bots/<id>/bot.sqlite` (`sessions` table).
+- Written when: a `SessionStart` hook event arrives. `HookRouter.onSessionStart` runs `DELETE WHERE window_id = ?` then `INSERT` in a single transaction.
+- Purpose: `drainTranscript` uses `transcript_path` to know which jsonl to tail.
+
+**Resume note**: When `claude --resume X` causes the hook to report a session id different from the original file's basename, the bot still follows `transcript_path` from the hook payload — there is no longer any session-id → filename inference, so no override is needed.
 
 ## Message Flows
 
 **Outbound** (user → Claude):
 ```
 User sends "hello" in topic (thread_id=42)
-  → thread_bindings[user_id][42] → "@0"
-  → send_to_window("@0", "hello")   # resolves via find_window_by_id
+  → SessionManager.getWindowForThread(uid, 42) → "@0"
+  → tmuxManager.sendKeys("@0", "hello")
 ```
 
 **Inbound** (Claude → user):
 ```
-SessionMonitor reads new message (session_id = "uuid-xxx")
-  → Iterate thread_bindings, find (user, thread) whose window_id maps to this session
-  → Deliver message to user in the correct topic (thread_id)
+Claude writes to <transcript_path>
+  → Claude fires PostToolUse / Stop hook
+  → agc hook → POST /hook/events { tmux_session, window_id, payload }
+  → HookRouter.dispatch (per-window queue) → drainTranscript(sessionId)
+  → drainTranscript: per-session lock → read [last_byte_offset, EOF) → parse → setOffset
+  → dispatcher → runtime.handleNewMessage → SessionManager.findUsersForWindow(@0)
+  → MessageQueueManager → Telegram (correct user + thread_id)
 ```
 
-**New topic flow**: First message in an unbound topic → directory browser → select directory → session picker (if existing sessions found) or create window → bind topic → forward pending message.
+**New topic flow**: First message in an unbound topic → directory browser → select directory → session picker (if existing sessions found) or create window → bind topic → forward pending message. `createAndBindWindow` waits for `SessionRegistry.getSessionByWindow(windowId)` to be populated by the inbound `SessionStart` hook (with the `session_map.json` poll kept as a legacy fallback).
 
-**Resume session flow**: When selecting a directory with existing Claude sessions, a session picker UI is shown. Choosing a session runs `claude --resume <session_id>`. Note: `--resume` makes the hook report a new session_id but messages continue writing to the original JSONL file; the bot overrides window_state to track the original session_id.
+**Resume session flow**: When selecting a directory with existing Claude sessions, a session picker UI is shown. Choosing a session runs `claude --resume <session_id>`. The bot trusts `transcript_path` from the hook payload, so any session-id divergence is harmless.
 
-**Topic lifecycle**: Closing/deleting a topic auto-kills the associated tmux window and unbinds the thread. Stale bindings (window deleted externally) are cleaned up by the status polling loop.
+**Topic lifecycle**: Closing/deleting a topic auto-kills the associated tmux window and unbinds the thread. Stale bindings (window deleted externally) are cleaned up by the status-polling loop and by the FK CASCADE on `windows`.
 
 ## Session Lifecycle
 
-**Startup cleanup**: On bot startup, all tracked sessions not present in session_map are cleaned up, preventing monitoring of closed sessions.
+**Startup catch-up**: After SQLite is opened and `SessionManager.hydrateFromRegistry` runs, the runtime iterates `registry.allLiveSessions()` and calls `drainTranscript` once per session to deliver any assistant text written while the bot was offline.
 
-**Runtime change detection**: Each polling cycle checks for session_map changes:
-- Window's session_id changed (e.g., after `/clear`) → clean up old session
-- Window deleted → clean up corresponding session
+**Runtime change detection**:
+- `SessionStart` (source `startup` / `resume` / `clear` / `compact`) → `DELETE + INSERT` on the same `window_id` row.
+- `SessionEnd` → `drainTranscript` (final read) → `DELETE FROM sessions WHERE session_id`.
+- Tmux window vanishes → `StatusPoller` removes the row from `windows`; FK CASCADE clears `sessions`, `thread_bindings`, `user_window_offsets`.

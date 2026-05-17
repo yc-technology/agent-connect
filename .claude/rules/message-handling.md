@@ -30,11 +30,15 @@ Per-user message queues + worker pattern for all send tasks:
 - Status polling skips enqueueing duplicate status text and avoids adding status work when a queue is already busy.
 - The default visible behavior is one temporary `Thinking...` status followed by the final answer.
 
-## Performance Optimizations
+## Performance Characteristics
 
-**mtime cache**: The monitoring loop maintains an in-memory file mtime cache, skipping reads for unchanged files.
+**Event-driven, not polled.** Transcript reads are triggered by hook events (`SessionStart`, `PostToolUse`, `PostToolBatch`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionEnd`). `drainTranscript` reads only `[last_byte_offset, file_size)` for the session named by the hook payload — no mtime cache, no directory scan.
 
-**Byte offset incremental reads**: Each tracked session records `last_byte_offset`, reading only new content. File truncation (offset > file_size) is detected and offset is auto-reset.
+**Per-session serialization.** `SessionRegistry.withSessionLock(sessionId, fn)` ensures only one drain per session runs at a time; concurrent events for the same session queue, then re-check `last_byte_offset` so the second caller is a cheap no-op. Different sessions drain in parallel.
+
+**Per-window event ordering.** `HookRouter` maintains a `Map<windowId, Promise>` queue, so `SessionStart` always completes before any subsequent event for the same window even if the HTTP POSTs race.
+
+**Truncation handling.** If `stat().size < last_byte_offset` the lock resets `last_byte_offset = 0` and evicts in-memory `pendingTools` before re-reading.
 
 ## No Message Truncation
 
