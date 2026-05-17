@@ -58,3 +58,70 @@ describe("SessionRegistry windows", () => {
     expect(reg.listLiveWindows()).toEqual([]);
   });
 });
+
+describe("SessionRegistry sessions", () => {
+  test("registerSession inserts row", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.registerSession({
+      sessionId: "S1",
+      windowId: "@0",
+      agentType: "claude",
+      transcriptPath: "/tmp/s1.jsonl",
+      cwd: "/a",
+      source: "startup"
+    });
+    expect(reg.getSession("S1")).toMatchObject({
+      session_id: "S1",
+      window_id: "@0",
+      agent_type: "claude",
+      transcript_path: "/tmp/s1.jsonl",
+      cwd: "/a",
+      source: "startup",
+      last_byte_offset: 0
+    });
+  });
+
+  test("registerSession replaces existing session for same window", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p1", cwd: "/a" });
+    reg.registerSession({ sessionId: "S2", windowId: "@0", agentType: "claude", transcriptPath: "/p2", cwd: "/a" });
+    expect(reg.getSession("S1")).toBeNull();
+    expect(reg.getSession("S2")).not.toBeNull();
+    expect(reg.getSessionByWindow("@0")?.session_id).toBe("S2");
+  });
+
+  test("endSession deletes the row", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p", cwd: "/a" });
+    reg.endSession("S1");
+    expect(reg.getSession("S1")).toBeNull();
+  });
+
+  test("deleteWindow cascades to sessions", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p", cwd: "/a" });
+    reg.deleteWindow("@0");
+    expect(reg.getSession("S1")).toBeNull();
+  });
+
+  test("allLiveSessions returns all sessions", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "a", "/a");
+    reg.upsertWindow("@1", "b", "/b");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p1", cwd: "/a" });
+    reg.registerSession({ sessionId: "S2", windowId: "@1", agentType: "codex", transcriptPath: "/p2", cwd: "/b" });
+    expect(reg.allLiveSessions().map((s) => s.session_id).sort()).toEqual(["S1", "S2"]);
+  });
+
+  test("setOffset updates last_byte_offset", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p", cwd: "/a" });
+    reg.setOffset("S1", 4096);
+    expect(reg.getSession("S1")?.last_byte_offset).toBe(4096);
+  });
+});

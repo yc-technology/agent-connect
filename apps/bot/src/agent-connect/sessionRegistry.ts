@@ -1,10 +1,33 @@
 import type Database from "better-sqlite3";
+import type { AgentType } from "./hookTypes.js";
 
 export interface WindowRow {
   window_id: string;
   display_name: string;
   cwd: string;
   created_at: number;
+}
+
+export interface SessionRow {
+  session_id: string;
+  window_id: string;
+  agent_type: AgentType;
+  transcript_path: string;
+  cwd: string;
+  source: string | null;
+  last_byte_offset: number;
+  started_at: number;
+}
+
+export interface RegisterSessionArgs {
+  sessionId: string;
+  windowId: string;
+  agentType: AgentType;
+  transcriptPath: string;
+  cwd: string;
+  source?: string;
+  startedAt?: number;
+  lastByteOffset?: number;
 }
 
 const SCHEMA_VERSION = "1";
@@ -95,5 +118,58 @@ export class SessionRegistry {
     return this.db
       .prepare("SELECT window_id, display_name, cwd, created_at FROM windows ORDER BY window_id")
       .all() as WindowRow[];
+  }
+
+  registerSession(args: RegisterSessionArgs): void {
+    const startedAt = args.startedAt ?? Date.now();
+    const lastByteOffset = args.lastByteOffset ?? 0;
+    const tx = this.db.transaction((a: RegisterSessionArgs) => {
+      this.db.prepare("DELETE FROM sessions WHERE window_id = ?").run(a.windowId);
+      this.db
+        .prepare(
+          `INSERT INTO sessions
+             (session_id, window_id, agent_type, transcript_path, cwd, source, last_byte_offset, started_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          a.sessionId,
+          a.windowId,
+          a.agentType,
+          a.transcriptPath,
+          a.cwd,
+          a.source ?? null,
+          lastByteOffset,
+          startedAt
+        );
+    });
+    tx(args);
+  }
+
+  endSession(sessionId: string): void {
+    this.db.prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
+  }
+
+  getSession(sessionId: string): SessionRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE session_id = ?")
+      .get(sessionId) as SessionRow | undefined;
+    return row ?? null;
+  }
+
+  getSessionByWindow(windowId: string): SessionRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM sessions WHERE window_id = ?")
+      .get(windowId) as SessionRow | undefined;
+    return row ?? null;
+  }
+
+  allLiveSessions(): SessionRow[] {
+    return this.db.prepare("SELECT * FROM sessions").all() as SessionRow[];
+  }
+
+  setOffset(sessionId: string, offset: number): void {
+    this.db
+      .prepare("UPDATE sessions SET last_byte_offset = ? WHERE session_id = ?")
+      .run(offset, sessionId);
   }
 }
