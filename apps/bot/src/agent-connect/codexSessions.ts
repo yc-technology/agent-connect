@@ -12,7 +12,7 @@ export interface CodexSessionRecord {
   updatedAtMs: number;
 }
 
-export interface CodexSessionInfo {
+interface CodexSessionInfo {
   sessionId: string;
   filePath: string;
   cwd: string;
@@ -59,7 +59,7 @@ export async function findCodexSession(
   return readCodexSessionRecord(sessionInfo.filePath, index);
 }
 
-export async function findCodexSessionInfo(
+async function findCodexSessionInfo(
   codexHomePath: string,
   sessionId: string
 ): Promise<CodexSessionInfo | null> {
@@ -77,32 +77,6 @@ export async function findCodexSessionInfo(
     };
   }
   return null;
-}
-
-export async function scanCodexSessionsForCwds(
-  codexHomePath: string,
-  activeCwds: Set<string>,
-  limit = DEFAULT_SCAN_LIMIT
-): Promise<CodexSessionInfo[]> {
-  if (activeCwds.size === 0) return [];
-  const files = await listCodexJsonlFiles(codexHomePath, limit);
-  const sessions: CodexSessionInfo[] = [];
-
-  for (const filePath of files) {
-    const meta = await readCodexSessionMeta(filePath);
-    if (!meta) continue;
-    const normalizedCwd = await normalizePath(meta.cwd);
-    if (!activeCwds.has(normalizedCwd)) continue;
-    const fileStat = await safeStat(filePath);
-    sessions.push({
-      sessionId: meta.sessionId,
-      filePath,
-      cwd: normalizedCwd,
-      updatedAtMs: fileStat?.mtimeMs ?? 0
-    });
-  }
-
-  return sessions.sort((a, b) => b.updatedAtMs - a.updatedAtMs);
 }
 
 async function readCodexSessionRecord(
