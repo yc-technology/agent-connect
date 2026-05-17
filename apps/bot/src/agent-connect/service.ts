@@ -1,8 +1,15 @@
 import { Config, sanitizeSensitiveEnv } from "./config.js";
 import { SqliteConfigStore } from "./configStore.js";
-import { MultiBotRuntimeManager } from "./multiBotRuntime.js";
+import { hookRouterRegistry, MultiBotRuntimeManager } from "./multiBotRuntime.js";
 import { proxyConfigLabel, setupHttpProxyFromEnv } from "./proxy.js";
+import {
+  readRuntimeJson,
+  removeRuntimeJson,
+  tcpProbe,
+  writeRuntimeJson
+} from "./runtimeJson.js";
 import { startServer, type RuntimeState } from "./server.js";
+import { agentConnectDir } from "./utils.js";
 
 export interface RunBotServiceOptions {
   hookEntrypoint?: string;
@@ -17,6 +24,15 @@ export async function runBotService(
   if (proxyConfig.enabled) {
     console.info(`HTTP proxy enabled: ${proxyConfigLabel(proxyConfig)}`);
   }
+
+  const runtimeDir = agentConnectDir(env);
+  const existingRuntime = await readRuntimeJson(runtimeDir);
+  if (existingRuntime && (await tcpProbe(existingRuntime.httpHost, existingRuntime.httpPort, 500))) {
+    throw new Error(
+      `another agent-connect service is running at ${existingRuntime.httpHost}:${existingRuntime.httpPort} (pid ${existingRuntime.pid})`
+    );
+  }
+
   if (config.enableMonitor) {
     await syncAgentHooks(env, options.hookEntrypoint);
   }
@@ -30,11 +46,15 @@ export async function runBotService(
   };
 
   const multiBotRuntime = new MultiBotRuntimeManager(config, configStore);
-  const server = await startServer(
-    config,
-    runtimeState,
-    config.enableTelegram ? { configStore, runtimeManager: multiBotRuntime } : { configStore }
-  );
+  const server = await startServer(config, runtimeState, {
+    ...(config.enableTelegram ? { configStore, runtimeManager: multiBotRuntime } : { configStore }),
+    hookRouterLookup: (tmuxSession) => hookRouterRegistry.get(tmuxSession) ?? null
+  });
+  await writeRuntimeJson(runtimeDir, {
+    httpHost: config.httpHost,
+    httpPort: config.httpPort,
+    pid: process.pid
+  });
   runtimeState.botReady = true;
 
   if (config.enableTelegram) {
@@ -48,6 +68,7 @@ export async function runBotService(
     await multiBotRuntime.stopAll();
     configStore.close();
     await server.close();
+    await removeRuntimeJson(runtimeDir);
   };
 
   process.once("SIGINT", () => {
@@ -60,7 +81,7 @@ export async function runBotService(
 
 async function syncAgentHooks(env: NodeJS.ProcessEnv, hookEntrypoint?: string): Promise<void> {
   try {
-    const { installCodexHook, installHook } = await import("./hook.js");
+    const { installCodexHook, installHook } = await import("./hookInstaller.js");
     const hookOptions = hookEntrypoint ? { env, entrypoint: hookEntrypoint } : { env };
     const claudeResult = await installHook({
       ...hookOptions

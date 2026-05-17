@@ -48,6 +48,7 @@ export interface RuntimeState {
 export interface ServerDeps {
   configStore?: SqliteConfigStore;
   runtimeManager?: BotRuntimeControl;
+  hookRouterLookup?: HookRouterLookup;
 }
 
 export interface BotRuntimeControl {
@@ -123,6 +124,10 @@ export function createServer(config: Config, state: RuntimeState, deps: ServerDe
 
   if (deps.configStore) {
     registerManagementRoutes(server, deps.configStore, state, deps.runtimeManager);
+  }
+
+  if (deps.hookRouterLookup) {
+    registerHookEndpoint(server, deps.hookRouterLookup);
   }
 
   return server;
