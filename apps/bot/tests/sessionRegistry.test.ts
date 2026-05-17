@@ -47,8 +47,8 @@ describe("SessionRegistry windows", () => {
     reg.upsertWindow("@0", "renamed", "/b");
     const rows = reg.listLiveWindows();
     expect(rows).toHaveLength(1);
-    expect(rows[0].display_name).toBe("renamed");
-    expect(rows[0].cwd).toBe("/b");
+    expect(rows[0]?.display_name).toBe("renamed");
+    expect(rows[0]?.cwd).toBe("/b");
   });
 
   test("deleteWindow removes row", () => {
