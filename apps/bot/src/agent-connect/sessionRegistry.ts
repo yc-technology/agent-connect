@@ -1,5 +1,12 @@
 import type Database from "better-sqlite3";
 
+export interface WindowRow {
+  window_id: string;
+  display_name: string;
+  cwd: string;
+  created_at: number;
+}
+
 const SCHEMA_VERSION = "1";
 
 const SCHEMA_SQL = `
@@ -66,5 +73,27 @@ export class SessionRegistry {
 
   close(): void {
     this.db.close();
+  }
+
+  upsertWindow(windowId: string, displayName: string, cwd: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO windows (window_id, display_name, cwd, created_at)
+           VALUES (?, ?, ?, ?)
+         ON CONFLICT(window_id) DO UPDATE SET
+           display_name = excluded.display_name,
+           cwd = excluded.cwd`
+      )
+      .run(windowId, displayName, cwd, Date.now());
+  }
+
+  deleteWindow(windowId: string): void {
+    this.db.prepare("DELETE FROM windows WHERE window_id = ?").run(windowId);
+  }
+
+  listLiveWindows(): WindowRow[] {
+    return this.db
+      .prepare("SELECT window_id, display_name, cwd, created_at FROM windows ORDER BY window_id")
+      .all() as WindowRow[];
   }
 }

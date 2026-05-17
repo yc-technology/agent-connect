@@ -26,3 +26,35 @@ describe("SessionRegistry schema", () => {
     expect(row?.value).toBe("1");
   });
 });
+
+describe("SessionRegistry windows", () => {
+  test("upsertWindow inserts a row", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "myproject", "/work/myproject");
+    expect(reg.listLiveWindows()).toEqual([
+      {
+        window_id: "@0",
+        display_name: "myproject",
+        cwd: "/work/myproject",
+        created_at: expect.any(Number)
+      }
+    ]);
+  });
+
+  test("upsertWindow updates display name on conflict", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "first", "/a");
+    reg.upsertWindow("@0", "renamed", "/b");
+    const rows = reg.listLiveWindows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].display_name).toBe("renamed");
+    expect(rows[0].cwd).toBe("/b");
+  });
+
+  test("deleteWindow removes row", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.deleteWindow("@0");
+    expect(reg.listLiveWindows()).toEqual([]);
+  });
+});
