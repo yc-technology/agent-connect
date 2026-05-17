@@ -64,6 +64,10 @@ export interface HistoryMessage {
   timestamp?: string | null;
 }
 
+export interface SessionRegistryLike {
+  getSessionByWindow(windowId: string): { session_id: string } | null;
+}
+
 export interface SessionManagerOptions {
   config: Pick<
     Config,
@@ -71,6 +75,7 @@ export interface SessionManagerOptions {
   >;
   tmuxManager?: Pick<TmuxManager, "listWindows" | "findWindowById" | "sendKeys">;
   loadState?: boolean;
+  registry?: SessionRegistryLike;
 }
 
 interface PersistedState {
@@ -112,6 +117,55 @@ export class SessionManager {
 
   isWindowId(key: string): boolean {
     return key.startsWith("@") && key.length > 1 && /^\d+$/.test(key.slice(1));
+  }
+
+  hydrateFromRegistry(registry: {
+    listLiveWindows(): Array<{ window_id: string; display_name: string; cwd: string }>;
+    iterThreadBindings(): IterableIterator<[number, number, string]>;
+    resolveChatId(userId: number, threadId: number | null): number;
+    getTopicProbeMessageId(userId: number, threadId: number): number | null;
+    getUserWindowOffset(userId: number, windowId: string): number | null;
+  }): void {
+    // Transitional bridge: populate in-memory state from SessionRegistry so bot.ts /
+    // statusPolling consumers see existing bindings after JSON files are renamed by
+    // the migration step. PR-4 will remove SessionManager and this method with it.
+    let touched = false;
+    for (const win of registry.listLiveWindows()) {
+      if (!this.windowDisplayNames[win.window_id]) {
+        this.windowDisplayNames[win.window_id] = win.display_name;
+        touched = true;
+      }
+      if (!this.windowStates[win.window_id]) {
+        this.windowStates[win.window_id] = new WindowState("", win.cwd, win.display_name);
+        touched = true;
+      }
+    }
+    for (const [userId, threadId, windowId] of registry.iterThreadBindings()) {
+      this.threadBindings[userId] ??= {};
+      if (this.threadBindings[userId][threadId] !== windowId) {
+        this.threadBindings[userId][threadId] = windowId;
+        touched = true;
+      }
+      const chatId = registry.resolveChatId(userId, threadId);
+      if (chatId !== userId && this.groupChatIds[`${userId}:${threadId}`] !== chatId) {
+        this.groupChatIds[`${userId}:${threadId}`] = chatId;
+        touched = true;
+      }
+      const probeId = registry.getTopicProbeMessageId(userId, threadId);
+      if (probeId !== null && this.topicProbeMessageIds[`${userId}:${threadId}`] !== probeId) {
+        this.topicProbeMessageIds[`${userId}:${threadId}`] = probeId;
+        touched = true;
+      }
+      const offset = registry.getUserWindowOffset(userId, windowId);
+      if (offset !== null) {
+        this.userWindowOffsets[userId] ??= {};
+        if (this.userWindowOffsets[userId][windowId] !== offset) {
+          this.userWindowOffsets[userId][windowId] = offset;
+          touched = true;
+        }
+      }
+    }
+    if (touched) this.saveState();
   }
 
   loadState(): void {
@@ -333,6 +387,8 @@ export class SessionManager {
     const key = `${this.options.config.tmuxSessionName}:${windowId}`;
     const deadline = Date.now() + timeout * 1000;
     while (Date.now() < deadline) {
+      // Hook-driven path: SessionRegistry is populated by HookRouter.onSessionStart.
+      if (this.options.registry?.getSessionByWindow(windowId)) return true;
       const sessionMap = await this.readSessionMap();
       const info = sessionMap?.[key];
       if (isRecord(info) && typeof info.session_id === "string" && info.session_id) {

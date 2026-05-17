@@ -100,7 +100,8 @@ export class MultiBotRuntimeManager {
       const db = new Database(join(botDir, "bot.sqlite"));
       const registry = new SessionRegistry(db);
 
-      const sessionManager = new SessionManager({ config, tmuxManager });
+      const sessionManager = new SessionManager({ config, tmuxManager, registry });
+      sessionManager.hydrateFromRegistry(registry);
       await sessionManager.resolveStaleIds();
 
       const bot = createGrammyBot(config.telegramBotToken);
