@@ -4,8 +4,16 @@ import { runBotService } from "./service.js";
 
 async function main(): Promise<void> {
   if (process.argv[2] === "hook") {
-    const { hookMain } = await import("./hook.js");
-    process.exitCode = await hookMain(process.argv.slice(2));
+    const rest = process.argv.slice(3);
+    if (rest.includes("--install")) {
+      const { installAllHooks } = await import("./hookInstaller.js");
+      const result = await installAllHooks();
+      (result.code === 0 ? process.stdout : process.stderr).write(`${result.message}\n`);
+      process.exitCode = result.code;
+      return;
+    }
+    const { runHookClient } = await import("./hookClient.js");
+    process.exitCode = await runHookClient();
     return;
   }
 

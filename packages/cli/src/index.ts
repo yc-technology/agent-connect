@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { hookMain } from "@agent-connect/bot/hook";
+import { runHookClient } from "@agent-connect/bot/hookClient";
+import { installAllHooks } from "@agent-connect/bot/hookInstaller";
 import { runBotService } from "@agent-connect/bot/service";
 
 const HELP_TEXT = `agc command line
@@ -13,6 +14,16 @@ Usage:
   agc help           Show this help
 `;
 
+async function runHook(argv: string[]): Promise<number> {
+  const rest = argv[0] === "hook" ? argv.slice(1) : argv;
+  if (rest.includes("--install")) {
+    const result = await installAllHooks();
+    (result.code === 0 ? process.stdout : process.stderr).write(`${result.message}\n`);
+    return result.code;
+  }
+  return runHookClient();
+}
+
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const command = argv[0] ?? "start";
 
@@ -22,11 +33,11 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   if (command === "hook") {
-    return hookMain(argv);
+    return runHook(argv);
   }
 
   if (command === "hook:install") {
-    return hookMain(["hook", "--install"]);
+    return runHook(["hook", "--install"]);
   }
 
   if (command === "start" || command === "serve" || command === "bot") {

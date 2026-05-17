@@ -10,9 +10,13 @@
       "types": "./dist/src/agent-connect/main.d.ts",
       "default": "./dist/src/agent-connect/main.js"
     },
-    "./hook": {
-      "types": "./dist/src/agent-connect/hook.d.ts",
-      "default": "./dist/src/agent-connect/hook.js"
+    "./hookClient": {
+      "types": "./dist/src/agent-connect/hookClient.d.ts",
+      "default": "./dist/src/agent-connect/hookClient.js"
+    },
+    "./hookInstaller": {
+      "types": "./dist/src/agent-connect/hookInstaller.d.ts",
+      "default": "./dist/src/agent-connect/hookInstaller.js"
     },
     "./service": {
       "types": "./dist/src/agent-connect/service.d.ts",
