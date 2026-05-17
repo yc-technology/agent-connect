@@ -1,5 +1,5 @@
 import { open, stat } from "node:fs/promises";
-import { TranscriptParser, type PendingToolInfo } from "./transcriptParser.js";
+import { TranscriptParser, type PendingToolInfo, type ToolResultImage } from "./transcriptParser.js";
 import type { SessionRegistry, SessionRow } from "./sessionRegistry.js";
 
 export interface NewMessageLike {
@@ -11,7 +11,7 @@ export interface NewMessageLike {
   toolUseId?: string | null;
   role: "user" | "assistant";
   toolName?: string | null;
-  imageData?: unknown;
+  imageData?: ToolResultImage[] | null;
 }
 
 export type Dispatcher = (windowId: string, entries: NewMessageLike[]) => Promise<void>;

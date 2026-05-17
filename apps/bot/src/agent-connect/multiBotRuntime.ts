@@ -1,14 +1,19 @@
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import type { Bot } from "grammy";
 import { BashCaptureManager } from "./bashCapture.js";
 import { registerBotHandlers, setupBotCommandsIfPossible } from "./bot.js";
 import { Config } from "./config.js";
 import type { BotConfigRecord } from "./botConfig.js";
 import type { SqliteConfigStore } from "./configStore.js";
+import { drainTranscript, type Dispatcher, type NewMessageLike } from "./drainTranscript.js";
+import { HookRouter } from "./hookRouter.js";
 import { MessageQueueManager } from "./messageQueue.js";
 import { telegramApiFromGrammy } from "./messageSender.js";
-import { wireMonitorToQueue } from "./runtime.js";
+import { migrateJsonToSqliteIfNeeded } from "./migration.js";
+import { handleNewMessage } from "./runtime.js";
 import { SessionManager } from "./session.js";
-import { SessionMonitor } from "./sessionMonitor.js";
+import { SessionRegistry } from "./sessionRegistry.js";
 import { StatusPoller } from "./statusPolling.js";
 import { createGrammyBot } from "./telegramClient.js";
 import { TmuxManager } from "./tmuxManager.js";
@@ -18,7 +23,9 @@ export interface BotRuntimeInstance {
   name: string;
   config: Config;
   bot: Bot;
-  monitor: SessionMonitor;
+  hookRouter: HookRouter;
+  registry: SessionRegistry;
+  db: Database.Database;
   statusPoller: StatusPoller;
   bashCapture: BashCaptureManager;
 }
@@ -30,6 +37,10 @@ export interface BotRuntimeStatus {
   stoppedAt: string | null;
   lastError: string | null;
 }
+
+// Global registry of per-bot HookRouters, keyed by tmux session name.
+// Fastify /hook/events endpoint uses this to route incoming events.
+export const hookRouterRegistry = new Map<string, HookRouter>();
 
 export class MultiBotRuntimeManager {
   private readonly instances = new Map<string, BotRuntimeInstance>();
@@ -84,17 +95,13 @@ export class MultiBotRuntimeManager {
       const tmuxManager = new TmuxManager(config);
       await tmuxManager.getOrCreateSession();
 
+      const botDir = config.configDir;
+      await migrateJsonToSqliteIfNeeded(botDir, config.tmuxSessionName, config.agentType);
+      const db = new Database(join(botDir, "bot.sqlite"));
+      const registry = new SessionRegistry(db);
+
       const sessionManager = new SessionManager({ config, tmuxManager });
       await sessionManager.resolveStaleIds();
-
-      const monitor = new SessionMonitor({
-        projectsPath: config.claudeProjectsPath,
-        pollInterval: config.monitorPollInterval,
-        stateFile: config.monitorStateFile,
-        config,
-        tmuxManager,
-        boundWindowIds: () => [...sessionManager.iterThreadBindings()].map(([, , windowId]) => windowId)
-      });
 
       const bot = createGrammyBot(config.telegramBotToken);
       const api = telegramApiFromGrammy(bot);
@@ -113,11 +120,22 @@ export class MultiBotRuntimeManager {
       await bot.init();
       await setupBotCommandsIfPossible(bot.api);
 
-      wireMonitorToQueue(monitor, {
-        config,
-        sessionManager,
-        messageQueue
-      });
+      const dispatcher: Dispatcher = async (_windowId, entries: NewMessageLike[]) => {
+        for (const msg of entries) {
+          await handleNewMessage(msg, { config, sessionManager, messageQueue });
+        }
+      };
+      const hookRouter = new HookRouter({ registry, dispatcher, agentType: config.agentType });
+      hookRouterRegistry.set(config.tmuxSessionName, hookRouter);
+
+      // Startup catch-up: deliver any assistant text written while the bot was offline.
+      for (const session of registry.allLiveSessions()) {
+        try {
+          await drainTranscript(registry, dispatcher, session.session_id);
+        } catch (error) {
+          console.warn(`startup drainTranscript ${session.session_id} failed:`, error);
+        }
+      }
 
       const statusPoller = new StatusPoller(
         {
@@ -130,9 +148,6 @@ export class MultiBotRuntimeManager {
         undefined,
         config.topicProbeInterval
       );
-
-      await monitor.cleanupAllStaleSessions();
-      monitor.start();
       statusPoller.start();
 
       const instance: BotRuntimeInstance = {
@@ -140,7 +155,9 @@ export class MultiBotRuntimeManager {
         name: record.name,
         config,
         bot,
-        monitor,
+        hookRouter,
+        registry,
+        db,
         statusPoller,
         bashCapture
       };
@@ -203,11 +220,16 @@ export class MultiBotRuntimeManager {
   private async stopInstance(instance: BotRuntimeInstance): Promise<void> {
     instance.bashCapture.cancelAll();
     await instance.statusPoller.stop();
-    await instance.monitor.stop();
+    hookRouterRegistry.delete(instance.config.tmuxSessionName);
     try {
       await instance.bot.stop();
     } catch (error) {
       console.error(`Failed to stop bot runtime ${instance.id}:`, error);
+    }
+    try {
+      instance.db.close();
+    } catch (error) {
+      console.error(`Failed to close bot.sqlite for ${instance.id}:`, error);
     }
   }
 
