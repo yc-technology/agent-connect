@@ -122,7 +122,7 @@ const emptyDraft: BotDraft = {
   allowedUsersText: "",
   agentType: "claude",
   tmuxSessionName: "",
-  claudeCommand: "claude",
+  claudeCommand: "claude --permission-mode bypassPermissions",
   openaiApiKey: "",
   openaiBaseUrl: "https://api.openai.com/v1",
   monitorPollInterval: "2",
@@ -395,7 +395,7 @@ function optionalNumber(value: string): number | undefined {
 }
 
 function defaultCommand(agentType: AgentType): string {
-  return agentType === "codex" ? "codex --yolo" : "claude";
+  return agentType === "codex" ? "codex --yolo" : "claude --permission-mode bypassPermissions";
 }
 
 function isDefaultCommand(command: string, agentType: AgentType): boolean {

@@ -365,6 +365,20 @@ describe("resolveHookCommand", () => {
     ).resolves.toBe("agc hook");
   });
 
+  it("carries config location env into generated hook commands", async () => {
+    await expect(
+      resolveHookCommand({
+        env: {
+          AGENT_CONNECT_DIR: "/tmp/agent connect",
+          AGENT_CONNECT_DB_FILE: "/tmp/agent connect/agent-connect.sqlite"
+        },
+        entrypoint: "/usr/local/bin/agc"
+      })
+    ).resolves.toBe(
+      "AGENT_CONNECT_DIR='/tmp/agent connect' AGENT_CONNECT_DB_FILE='/tmp/agent connect/agent-connect.sqlite' agc hook"
+    );
+  });
+
   it("uses a dev-safe command for the TypeScript entrypoint", async () => {
     await expect(
       resolveHookCommand({

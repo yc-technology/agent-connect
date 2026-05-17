@@ -10,7 +10,7 @@ React management console.
 - `apps/bot/tests/` - Vitest coverage for migrated behavior
 - `apps/web/src/` - React + Vite + Zustand management console
 - `packages/cli/src/` - command line entrypoints for service startup and hooks
-- `packages/telegramify-markdown/src/` - Telegram HTML formatting package
+- `packages/telegramify-markdown/src/` - `@agent-connect/telegramify-markdown` Telegram HTML formatting package
 - `apps/bot/dist/` and `apps/web/dist/` - build output, ignored by git
 - `pnpm-workspace.yaml` - workspace definition for `apps/*` and `packages/*`
 
@@ -40,7 +40,7 @@ pnpm hook:install
 only one side is needed.
 
 `pnpm dev:bot`, `pnpm start`, and `pnpm hook:install` are backed by the
-`@agent-connect/cli` package. Its binary supports `agc start`, `agc hook`, and
+`agent-connect` CLI package. Its binary supports `agc start`, `agc hook`, and
 `agc hook --install`; hook synchronization points Claude and Codex back to
 that CLI entrypoint.
 

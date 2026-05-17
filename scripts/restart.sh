@@ -20,7 +20,7 @@ fi
 PANE_PID=$(tmux list-panes -t "$TARGET" -F '#{pane_pid}')
 
 is_agent_connect_running() {
-  pstree -a "$PANE_PID" 2>/dev/null | grep -Eq 'pnpm .*(@agent-connect/cli|dev:bot|start)|node .*packages/cli/dist/src/index\.js|agc( |$)'
+  pstree -a "$PANE_PID" 2>/dev/null | grep -Eq 'pnpm .*(@agent-connect/cli|--filter agent-connect|dev:bot|start)|node .*packages/cli/dist/src/index\.js|agc( |$)'
 }
 
 if is_agent_connect_running; then

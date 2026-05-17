@@ -123,7 +123,37 @@ describe("Config", () => {
     try {
       process.chdir(botDir);
       new Config(env);
-      expect(process.env.HTTP_PROXY).toBe("http://127.0.0.1:7890/");
+      expect(env.HTTP_PROXY).toBe("http://127.0.0.1:7890/");
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it("uses AGENT_CONNECT_DIR from workspace .env for state and database paths", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "agent-connect-dir-env-test-"));
+    const botDir = join(workspace, "apps", "bot");
+    const configDir = join(workspace, "custom-config");
+    mkdirSync(botDir, { recursive: true });
+    writeFileSync(
+      join(workspace, ".env"),
+      [
+        `AGENT_CONNECT_DIR=${configDir}`,
+        "TELEGRAM_BOT_TOKEN=test:token",
+        "ALLOWED_USERS=12345"
+      ].join("\n"),
+      "utf8"
+    );
+    const env: NodeJS.ProcessEnv = {};
+
+    try {
+      process.chdir(botDir);
+      const config = new Config(env, { sanitizeProcessEnv: false });
+      expect(config.configDir).toBe(configDir);
+      expect(config.databaseFile).toBe(join(configDir, "agent-connect.sqlite"));
+      expect(config.stateFile).toBe(join(configDir, "state.json"));
+      expect(config.sessionMapFile).toBe(join(configDir, "session_map.json"));
+      expect(config.telegramBotToken).toBe("test:token");
+      expect(config.isUserAllowed(12345)).toBe(true);
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

@@ -1,7 +1,6 @@
 {
-  "name": "telegramify-markdown",
+  "name": "@agent-connect/telegramify-markdown",
   "version": "1.1.5",
-  "private": true,
   "type": "module",
   "description": "Convert Markdown to Telegram text, MessageEntity objects, and MarkdownV2",
   "main": "./dist/index.mjs",
@@ -15,10 +14,14 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:ts": "vitest run"
+    "test:ts": "vitest run",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "remark-gfm": "^4.0.1",

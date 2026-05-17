@@ -227,29 +227,33 @@ export async function resolveHookCommand(options: ResolveHookCommandOptions = {}
   const explicit = env.AGENT_CONNECT_HOOK_COMMAND?.trim();
   if (explicit) return explicit.endsWith(" hook") ? explicit : `${explicit} hook`;
 
+  let command = HOOK_COMMAND_SUFFIX;
   const currentEntrypoint = options.entrypoint ?? process.argv[1];
   if (currentEntrypoint) {
     const name = basename(currentEntrypoint);
     if ((AGENT_CONNECT_BIN_NAMES as readonly string[]).includes(name)) {
-      return HOOK_COMMAND_SUFFIX;
+      return withHookEnv(command, env);
     }
     if (name === "main.js" || name === "index.js") {
-      if (await findAgcPath(env)) return HOOK_COMMAND_SUFFIX;
-      return `${shellQuote(process.execPath)} ${shellQuote(currentEntrypoint)} hook`;
+      if (await findAgcPath(env)) return withHookEnv(command, env);
+      command = `${shellQuote(process.execPath)} ${shellQuote(currentEntrypoint)} hook`;
+      return withHookEnv(command, env);
     }
     if (name === "main.ts") {
-      if (await findAgcPath(env)) return HOOK_COMMAND_SUFFIX;
+      if (await findAgcPath(env)) return withHookEnv(command, env);
       const appDir = dirname(dirname(dirname(currentEntrypoint)));
-      return `cd ${shellQuote(appDir)} && pnpm exec tsx src/agent-connect/main.ts hook`;
+      command = `cd ${shellQuote(appDir)} && pnpm exec tsx src/agent-connect/main.ts hook`;
+      return withHookEnv(command, env);
     }
     if (name === "index.ts") {
-      if (await findAgcPath(env)) return HOOK_COMMAND_SUFFIX;
+      if (await findAgcPath(env)) return withHookEnv(command, env);
       const packageDir = dirname(dirname(currentEntrypoint));
-      return `cd ${shellQuote(packageDir)} && pnpm exec tsx src/index.ts hook`;
+      command = `cd ${shellQuote(packageDir)} && pnpm exec tsx src/index.ts hook`;
+      return withHookEnv(command, env);
     }
   }
 
-  return HOOK_COMMAND_SUFFIX;
+  return withHookEnv(command, env);
 }
 
 export async function processHookEvent(payload: HookPayload, options: HookProcessOptions = {}): Promise<boolean> {
@@ -326,6 +330,8 @@ export async function hookMain(
 ): Promise<number> {
   const args = argv[0] === "hook" ? argv.slice(1) : argv;
   if (args.includes("--install")) {
+    const { loadRuntimeEnv } = await import("./config.js");
+    loadRuntimeEnv(process.env);
     const result = await installAllHooks();
     (result.code === 0 ? stdout : stderr).write(`${result.message}\n`);
     return result.code;
@@ -509,6 +515,14 @@ async function findConfigDirForTmuxSession(tmuxSessionName: string, env: NodeJS.
 
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function withHookEnv(command: string, env: NodeJS.ProcessEnv): string {
+  const assignments = ["AGENT_CONNECT_DIR", "AGENT_CONNECT_DB_FILE"].flatMap((name) => {
+    const value = env[name]?.trim();
+    return value ? [`${name}=${shellQuote(value)}`] : [];
+  });
+  return assignments.length > 0 ? `${assignments.join(" ")} ${command}` : command;
 }
 
 async function withLock<T>(lockFile: string, fn: () => Promise<T>, retries = 50): Promise<T> {

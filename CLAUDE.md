@@ -11,7 +11,7 @@ tmux, pnpm.
 
 ```bash
 pnpm dev             # Start bot/API and web console
-pnpm dev:bot         # Start only the bot/API service through @agent-connect/cli
+pnpm dev:bot         # Start only the bot/API service through the agent-connect CLI package
 pnpm dev:web         # Start only the React management console
 pnpm typecheck       # Type check every workspace package
 pnpm build           # Build every workspace package
@@ -25,7 +25,7 @@ pnpm hook:install    # Synchronize Claude and Codex hooks
 - **1 Topic = 1 Window = 1 Session** — internal routing is keyed by tmux window ID (`@0`, `@12`), not window name. Window names are display names only.
 - **Topic-only** — no `/list`, no General topic routing, and no compatibility path for old non-topic modes.
 - **No parse-layer truncation** — full transcript content is preserved; splitting happens only at Telegram send time.
-- **HTML formatting** — Markdown is converted to Telegram HTML through the workspace `telegramify-markdown` package, with plain-text fallback.
+- **HTML formatting** — Markdown is converted to Telegram HTML through the workspace `@agent-connect/telegramify-markdown` package, with plain-text fallback.
 - **Hook-based session tracking** — Claude and Codex hooks write `session_map.json`; the monitor watches that map for session changes.
 - **Message queue per user** — FIFO ordering, message merging, and tool_use/tool_result pairing live in the send queue.
 - **Intermediate messages default off** — Telegram receives a temporary `Thinking...` status and the final answer unless enabled in config.

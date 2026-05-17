@@ -1,31 +1,38 @@
 {
   "name": "@agent-connect/bot",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Agent Connect TypeScript bot and management API",
   "main": "./dist/src/agent-connect/main.js",
+  "types": "./dist/src/agent-connect/main.d.ts",
   "exports": {
     ".": {
-      "types": "./src/agent-connect/main.ts",
+      "types": "./dist/src/agent-connect/main.d.ts",
       "default": "./dist/src/agent-connect/main.js"
     },
     "./hook": {
-      "types": "./src/agent-connect/hook.ts",
+      "types": "./dist/src/agent-connect/hook.d.ts",
       "default": "./dist/src/agent-connect/hook.js"
     },
     "./service": {
-      "types": "./src/agent-connect/service.ts",
+      "types": "./dist/src/agent-connect/service.d.ts",
       "default": "./dist/src/agent-connect/service.js"
     }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "dev": "tsx src/agent-connect/main.ts",
     "start": "node dist/src/agent-connect/main.js",
     "hook:install": "pnpm build && node dist/src/agent-connect/main.js hook --install",
-    "build": "tsc -p tsconfig.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:ts": "vitest run"
+    "test:ts": "vitest run",
+    "prepack": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm build"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
@@ -33,7 +40,7 @@
     "fastify": "^5.8.5",
     "grammy": "^1.43.0",
     "sharp": "^0.34.5",
-    "telegramify-markdown": "workspace:*",
+    "@agent-connect/telegramify-markdown": "workspace:*",
     "undici": "^8.3.0"
   },
   "devDependencies": {

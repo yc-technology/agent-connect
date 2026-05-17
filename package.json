@@ -1,22 +1,22 @@
 {
-  "name": "agent-connect",
+  "name": "agent-connect-monorepo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.6.3",
   "description": "Agent Connect TypeScript monorepo",
   "scripts": {
-    "dev": "pnpm --filter @agent-connect/cli --filter @agent-connect/web --parallel --stream dev",
-    "dev:bot": "pnpm --filter @agent-connect/cli dev",
+    "dev": "pnpm --filter agent-connect --filter @agent-connect/web --parallel --stream dev",
+    "dev:bot": "pnpm --filter agent-connect dev",
     "dev:web": "pnpm --filter @agent-connect/web dev",
-    "start": "pnpm --filter @agent-connect/cli start",
-    "hook:install": "pnpm --filter @agent-connect/cli hook:install",
+    "start": "pnpm --filter agent-connect start",
+    "hook:install": "pnpm --filter agent-connect hook:install",
     "build": "pnpm -r build",
-    "typecheck": "pnpm --filter telegramify-markdown build && pnpm -r typecheck",
-    "test:ts": "pnpm --filter telegramify-markdown build && pnpm -r test:ts"
+    "typecheck": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm -r typecheck",
+    "test:ts": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm -r test:ts"
   },
   "devDependencies": {
-    "@agent-connect/cli": "workspace:*",
+    "agent-connect": "workspace:*",
     "@types/node": "^25.8.0",
     "tsx": "^4.22.0",
     "typescript": "^6.0.3",

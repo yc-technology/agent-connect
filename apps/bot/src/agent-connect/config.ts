@@ -47,13 +47,10 @@ export class Config {
 
   constructor(env: NodeJS.ProcessEnv = process.env, options: ConfigOptions = {}) {
     this.botId = options.bot?.id ?? null;
-    const baseConfigDir = agentConnectDir(env);
+
+    const baseConfigDir = loadRuntimeEnv(env);
     this.configDir = options.configDir ?? (options.bot ? botConfigDir(baseConfigDir, options.bot.id) : baseConfigDir);
     mkdirSync(this.configDir, { recursive: true });
-
-    for (const envFile of envFiles(baseConfigDir)) {
-      loadDotenv({ path: envFile, override: false });
-    }
 
     this.telegramBotToken = options.bot?.telegramBotToken ?? env.TELEGRAM_BOT_TOKEN ?? "";
     if (!this.telegramBotToken && options.requireTelegramConfig !== false) {
@@ -136,13 +133,25 @@ export function sanitizeSensitiveEnv(): void {
   }
 }
 
-function envFiles(baseConfigDir: string, cwd = process.cwd()): string[] {
+export function loadRuntimeEnv(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): string {
+  loadEnvFiles(workspaceEnvFiles(cwd), env);
+  let baseConfigDir = agentConnectDir(env);
+  loadEnvFiles([join(baseConfigDir, ".env")], env);
+  return agentConnectDir(env);
+}
+
+function workspaceEnvFiles(cwd = process.cwd()): string[] {
   return uniqueExistingPaths([
     join(cwd, ".env"),
     join(cwd, "..", ".env"),
-    join(cwd, "..", "..", ".env"),
-    join(baseConfigDir, ".env")
+    join(cwd, "..", "..", ".env")
   ]);
+}
+
+function loadEnvFiles(paths: string[], env: NodeJS.ProcessEnv): void {
+  for (const envFile of uniqueExistingPaths(paths)) {
+    loadDotenv({ path: envFile, override: false, processEnv: env as Record<string, string> });
+  }
 }
 
 function uniqueExistingPaths(paths: string[]): string[] {
