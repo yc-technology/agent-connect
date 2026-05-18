@@ -63,6 +63,19 @@ const UI_PATTERNS: UIPattern[] = [
     top: [/^\s*Settings:.*tab to cycle/, /^\s*Select model/],
     bottom: [/Esc to cancel/, /Esc to exit/, /Enter to confirm/, /^\s*Type to filter/],
     minGap: 2
+  },
+  // ─── Codex TUI prompts ───
+  // Codex shapes its interactive prompts differently from Claude:
+  //   - AskUserQuestion uses a "Question N/M" header + "›" cursor + numbered
+  //     options + "tab to add notes | enter to submit answer | esc to interrupt"
+  //     footer (instead of Claude's ☐/☑/☒ checkbox glyphs).
+  // Reuses the same logical names so handleInteractiveUi + keyboard layout
+  // work unchanged — only the matcher is Codex-specific.
+  {
+    name: "AskUserQuestion",
+    top: [/^\s*Question\s+\d+\/\d+/],
+    bottom: [/^\s*tab to add notes\s*\|\s*enter to submit answer/i],
+    minGap: 2
   }
 ];
 

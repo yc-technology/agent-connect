@@ -66,6 +66,32 @@ describe("interactive UI extraction", () => {
     expect(extractInteractiveContent("$ echo hello\nhello\n$\n")).toBeNull();
     expect(isInteractiveUi("")).toBe(false);
   });
+
+  it("extracts Codex AskUserQuestion (numbered options + tab/enter/esc footer)", () => {
+    // Real Codex 0.130 pane capture during an AskUserQuestion prompt.
+    const pane =
+      "› 现在可以了吧\n" +
+      "\n" +
+      "• 切到 Plan Mode 了。\n" +
+      "\n" +
+      "  Question 1/1 (1 unanswered)\n" +
+      "  请选择这次 ask user 能力测试的方向。\n" +
+      "\n" +
+      "  › 1. 只做演示 (Recommended)  验证选择器能弹出并回传答案，不修改仓库。\n" +
+      "    2. 检查实现                读取 packages/cli 中 ask user 相关代码。\n" +
+      "    3. 规划测试                制定 ask user 的手动和自动化测试方案。\n" +
+      "    4. None of the above       Optionally, add details in notes (tab).\n" +
+      "\n" +
+      "  tab to add notes | enter to submit answer | esc to interrupt\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("AskUserQuestion");
+    expect(result?.content).toContain("Question 1/1");
+    expect(result?.content).toContain("› 1. 只做演示");
+    expect(result?.content).toContain("tab to add notes");
+    // Should NOT bleed earlier non-prompt context into the extraction.
+    expect(result?.content).not.toContain("现在可以了吧");
+    expect(result?.content).not.toContain("Plan Mode");
+  });
 });
 
 describe("stripPaneChrome", () => {
