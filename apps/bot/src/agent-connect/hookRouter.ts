@@ -2,15 +2,18 @@ import type { SessionRegistry } from "./sessionRegistry.js";
 import type { Dispatcher } from "./drainTranscript.js";
 import { drainTranscript } from "./drainTranscript.js";
 import type { AgentType, HookEnvelope, HookEventName } from "./hookTypes.js";
+import { TranscriptParser } from "./transcriptParser.js";
 
 export type TurnEndOutcome = "success" | "failure";
 export type OnTurnEnd = (windowId: string, outcome: TurnEndOutcome) => Promise<void>;
+export type OnStatusEvent = (windowId: string, statusText: string) => Promise<void>;
 
 export interface HookRouterDeps {
   registry: SessionRegistry;
   dispatcher: Dispatcher;
   agentType: AgentType;
   onTurnEnd?: OnTurnEnd;
+  onStatusEvent?: OnStatusEvent;
 }
 
 export class HookRouter {
@@ -52,10 +55,13 @@ export class HookRouter {
         return;
       case "PostToolUseFailure":
         return this.onDrain(envelope);
+      case "PermissionRequest":
+        await this.firePermissionRequest(envelope);
+        return;
       case "PreToolUse":
       case "Notification":
-      case "PermissionRequest":
-        // Status-only events handled in a later task; currently ignored.
+        // Other status-only events: currently ignored. TUI status line
+        // already shows tool progress via StatusPoller.
         return;
       default:
         return;
@@ -68,6 +74,23 @@ export class HookRouter {
       await this.deps.onTurnEnd(envelope.window_id, outcome);
     } catch (err) {
       console.warn("[hookRouter onTurnEnd]", err);
+    }
+  }
+
+  /**
+   * Codex pauses for user approval mid-turn and fires PermissionRequest. The
+   * tmux pane shows the prompt but a Telegram-only user has no signal —
+   * surface a status update telling them to attach and decide.
+   */
+  private async firePermissionRequest(envelope: HookEnvelope): Promise<void> {
+    if (!this.deps.onStatusEvent) return;
+    const { payload } = envelope;
+    const toolName = typeof payload.tool_name === "string" ? payload.tool_name : "tool";
+    const summary = TranscriptParser.formatToolUseSummary(toolName, payload.tool_input ?? {});
+    try {
+      await this.deps.onStatusEvent(envelope.window_id, `⚠️ Approval needed: ${summary}`);
+    } catch (err) {
+      console.warn("[hookRouter onStatusEvent]", err);
     }
   }
 

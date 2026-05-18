@@ -1013,7 +1013,7 @@ describe("bot text and picker flow", () => {
     expect(answerCallbackQuery).toHaveBeenCalledWith("Created");
   });
 
-  it("resumes a selected existing session", async () => {
+  it("resumes a selected existing session by spawning `claude --resume <id>` and binding the topic", async () => {
     const store = new BotStateStore();
     Object.assign(store.userData(12345), {
       state: "selecting_session",
@@ -1024,8 +1024,8 @@ describe("bot text and picker flow", () => {
       _pending_thread_id: 42,
       _pending_thread_text: "continue"
     });
-    const windowState = new WindowState("new-hook-id", "", "");
-    const saveState = vi.fn();
+    const bindThread = vi.fn();
+    const sendToWindow = vi.fn(async () => [true, "ok"] as [boolean, string]);
     const createWindow = vi.fn(async () => [
       true,
       "Created window 'project' at /tmp/project",
@@ -1046,12 +1046,12 @@ describe("bot text and picker flow", () => {
       config,
       {
         setGroupChatId: vi.fn(),
-        bindThread: vi.fn(),
+        bindThread,
         listSessionsForDirectory: vi.fn(),
-        waitForSessionMapEntry: vi.fn(async () => false),
-        getWindowState: vi.fn(() => windowState),
-        saveState,
-        sendToWindow: vi.fn(async () => [true, "ok"] as [boolean, string])
+        waitForSessionMapEntry: vi.fn(async () => true),
+        getWindowState: vi.fn(() => new WindowState()),
+        saveState: vi.fn(),
+        sendToWindow
       },
       {
         findWindowById: vi.fn(),
@@ -1061,7 +1061,10 @@ describe("bot text and picker flow", () => {
     );
 
     expect(createWindow).toHaveBeenCalledWith("/tmp/project", { resumeSessionId: "s1" });
-    expect(windowState).toMatchObject({ sessionId: "s1", cwd: "/tmp/project", windowName: "project" });
-    expect(saveState).toHaveBeenCalled();
+    // Post-refactor: state.sessionId override is gone — SessionStart hook
+    // populates SessionRegistry with whatever Claude reports. Verify the
+    // topic was bound and the pending text was forwarded.
+    expect(bindThread).toHaveBeenCalledWith(12345, 42, "@9", "project");
+    expect(sendToWindow).toHaveBeenCalledWith("@9", "continue");
   });
 });

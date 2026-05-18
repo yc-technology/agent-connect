@@ -1505,15 +1505,10 @@ async function createAndBindWindow(
   userId: number,
   selectedPath: string,
   threadId: number | null,
-  agentType: AgentType,
+  _agentType: AgentType,
   sessionManager: Pick<
     SessionManager,
-    | "bindThread"
-    | "listSessionsForDirectory"
-    | "waitForSessionMapEntry"
-    | "getWindowState"
-    | "saveState"
-    | "sendToWindow"
+    "bindThread" | "waitForSessionMapEntry" | "sendToWindow"
   >,
   tmuxManager: Pick<TmuxManager, "createWindow">,
   resumeSessionId: string | null = null
@@ -1528,17 +1523,13 @@ async function createAndBindWindow(
     return;
   }
 
-  const hookOk = await sessionManager.waitForSessionMapEntry(createdWindowId, resumeSessionId ? 15 : 5);
-  let knownSessionId = resumeSessionId;
-  if (knownSessionId) {
-    const state = sessionManager.getWindowState(createdWindowId);
-    if (agentType === "codex" || !hookOk || state.sessionId !== knownSessionId) {
-      state.sessionId = knownSessionId;
-      state.cwd = selectedPath;
-      state.windowName = createdWindowName;
-      sessionManager.saveState();
-    }
-  }
+  // Block briefly so the SessionStart hook can populate Registry before we
+  // bind the topic + forward the user's first message. Post-refactor Registry
+  // is the only place that matters for transcript reads, so the legacy
+  // state.sessionId override on resume is no longer necessary — the hook's
+  // transcript_path is authoritative regardless of which session_id Claude
+  // reports.
+  await sessionManager.waitForSessionMapEntry(createdWindowId, resumeSessionId ? 15 : 5);
 
   if (threadId !== null) {
     sessionManager.bindThread(userId, threadId, createdWindowId, createdWindowName);

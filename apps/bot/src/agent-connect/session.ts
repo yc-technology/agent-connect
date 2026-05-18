@@ -573,6 +573,22 @@ export class SessionManager {
   }
 
   async resolveSessionForWindow(windowId: string): Promise<ClaudeSession | null> {
+    // Prefer the Registry (authoritative post-hook-refactor). The transcript
+    // path comes straight from the SessionStart hook payload so this works
+    // even for resume cases where session_id and the filename diverge.
+    const regRow = this.options.registry?.getSessionByWindow(windowId);
+    if (regRow?.transcript_path) {
+      const result: ClaudeSession = {
+        sessionId: regRow.session_id,
+        summary: "",
+        messageCount: 0,
+        filePath: regRow.transcript_path
+      };
+      if (regRow.agent_type === "codex" || regRow.agent_type === "claude") {
+        result.agentType = regRow.agent_type;
+      }
+      return result;
+    }
     let state = this.getWindowState(windowId);
     if (!state.sessionId || !state.cwd) {
       await this.loadSessionMap();

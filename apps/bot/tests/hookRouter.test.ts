@@ -187,6 +187,89 @@ describe("HookRouter records lastEvent on every dispatched event", () => {
   });
 });
 
+describe("HookRouter PermissionRequest", () => {
+  test("fires onStatusEvent with formatted tool summary", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: Array<{ windowId: string; text: string }> = [];
+    const onStatusEvent = async (windowId: string, text: string) => {
+      statuses.push({ windowId, text });
+    };
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "codex",
+      onStatusEvent
+    });
+    await router.dispatch(
+      envelope(
+        "PermissionRequest",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.codex/sessions/r.jsonl",
+          cwd: "/work",
+          tool_name: "Bash",
+          tool_input: { command: "rm -rf /tmp/x" }
+        },
+        { window_id: "@7" }
+      )
+    );
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.windowId).toBe("@7");
+    expect(statuses[0]?.text).toContain("Approval needed");
+    expect(statuses[0]?.text).toContain("Bash");
+    expect(statuses[0]?.text).toContain("rm -rf");
+  });
+
+  test("PermissionRequest without onStatusEvent dep is a no-op (no throw)", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "codex"
+    });
+    await router.dispatch(
+      envelope(
+        "PermissionRequest",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.codex/sessions/r.jsonl",
+          cwd: "/work",
+          tool_name: "Bash"
+        },
+        { window_id: "@7" }
+      )
+    );
+  });
+
+  test("foreign-agent PermissionRequest is filtered before onStatusEvent fires", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: unknown[] = [];
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "claude", // bot is claude
+      onStatusEvent: async (...args) => {
+        statuses.push(args);
+      }
+    });
+    // PermissionRequest from codex (codex path) routed to a Claude bot —
+    // shouldIgnore drops it.
+    await router.dispatch(
+      envelope(
+        "PermissionRequest",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.codex/sessions/r.jsonl",
+          cwd: "/work",
+          tool_name: "Bash"
+        },
+        { window_id: "@7" }
+      )
+    );
+    expect(statuses).toEqual([]);
+  });
+});
+
 describe("HookRouter foreign-agent filter", () => {
   test("claude bot ignores SessionStart with codex transcript_path", async () => {
     const { registry, router } = setup();

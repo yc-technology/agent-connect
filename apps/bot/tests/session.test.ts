@@ -492,6 +492,33 @@ describe("SessionManager registry dual-write", () => {
     }
   });
 
+  it("resolveSessionForWindow prefers Registry over legacy state.json", async () => {
+    const dir = tmpDir();
+    try {
+      const registry = fakeRegistry();
+      // Stub getSessionByWindow to return a registry row.
+      const reg = {
+        ...registry,
+        getSessionByWindow: () => ({
+          session_id: "reg-session",
+          agent_type: "claude",
+          transcript_path: "/path/to/transcript.jsonl"
+        })
+      };
+      const mgr = makeManagerWithRegistry(dir, reg as never);
+      const session = await mgr.resolveSessionForWindow("@1");
+      expect(session).toEqual({
+        sessionId: "reg-session",
+        summary: "",
+        messageCount: 0,
+        filePath: "/path/to/transcript.jsonl",
+        agentType: "claude"
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("no-ops cleanly when registry is not provided", () => {
     const dir = tmpDir();
     try {

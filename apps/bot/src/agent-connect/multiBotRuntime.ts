@@ -141,10 +141,17 @@ export class MultiBotRuntimeManager {
           }
         }
       };
+      const onStatusEvent = async (windowId: string, statusText: string) => {
+        for (const [userId, _w, threadId] of sessionManager.findUsersForWindow(windowId)) {
+          messageQueue.enqueueStatusUpdate(userId, windowId, statusText, threadId);
+          await messageQueue.drain(userId);
+        }
+      };
       const hookRouter = new HookRouter({
         registry,
         dispatcher,
         onTurnEnd,
+        onStatusEvent,
         agentType: config.agentType
       });
       hookRouterRegistry.set(config.tmuxSessionName, hookRouter);
