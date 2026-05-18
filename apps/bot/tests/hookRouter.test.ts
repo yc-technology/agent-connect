@@ -3,7 +3,7 @@ import { SessionRegistry } from "../src/agent-connect/sessionRegistry.js";
 import { HookRouter } from "../src/agent-connect/hookRouter.js";
 import { inMemoryDb } from "./helpers/registryFixtures.js";
 import { envelope } from "./helpers/hookEnvelope.js";
-import { writeFakeTranscript } from "./helpers/transcriptFixtures.js";
+import { appendToTranscript, writeFakeTranscript } from "./helpers/transcriptFixtures.js";
 import type { Dispatcher } from "../src/agent-connect/drainTranscript.js";
 
 function setup(): {
@@ -105,11 +105,9 @@ describe("HookRouter SessionStart", () => {
     expect(dispatched).toContainEqual({ windowId: "@0", count: 1 });
   });
 
-  test("source=startup keeps last_byte_offset at 0 (no behavior change for fresh sessions)", async () => {
+  test("source=startup with empty transcript file gets offset 0 (fresh-session common case)", async () => {
     const { registry, router } = setup();
-    const path = await writeFakeTranscript([
-      { type: "assistant", message: { content: [{ type: "text", text: "first answer" }] } }
-    ]);
+    const path = await writeFakeTranscript([]);
     await router.dispatch(
       envelope(
         "SessionStart",
@@ -118,6 +116,43 @@ describe("HookRouter SessionStart", () => {
       )
     );
     expect(registry.getSession("S")?.last_byte_offset).toBe(0);
+  });
+
+  test("source=compact seeds last_byte_offset to EOF (no history re-dump after compact)", async () => {
+    // Critical regression: /compact in Claude does NOT truncate the jsonl —
+    // it appends a summary entry to the existing file. If we left offset 0
+    // for source=compact, the DELETE+INSERT on the same window_id would
+    // reset progress and the next drain would re-emit the entire historical
+    // transcript to Telegram. The compact-done notification (dispatchCompactDone
+    // below) is the only user-visible signal for compact; the next user prompt
+    // drains normally from the post-compact EOF.
+    const { registry, router, dispatched } = setup();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "huge prior turn 1" }] } },
+      { type: "user", message: { content: "huge prior prompt" } },
+      { type: "assistant", message: { content: [{ type: "text", text: "huge prior turn 2" }] } }
+    ]);
+    const { statSync } = await import("node:fs");
+    const preCompactSize = statSync(path).size;
+
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "S", transcript_path: path, cwd: "/a", source: "compact" },
+        { window_id: "@0" }
+      )
+    );
+
+    expect(registry.getSession("S")?.last_byte_offset).toBe(preCompactSize);
+
+    // Subsequent Stop must NOT drain the historical content.
+    const beforeStopCount = dispatched.length;
+    await router.dispatch(
+      envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    // The only dispatch since SessionStart is the synthetic "Compact done"
+    // notification — Stop's drain reads zero bytes and dispatches nothing.
+    expect(dispatched.length - beforeStopCount).toBe(0);
   });
 
   test("source=compact dispatches a 'Compact done' notification through the pipeline", async () => {
@@ -204,10 +239,12 @@ describe("HookRouter SessionStart", () => {
 
 describe("HookRouter drain-triggering events", () => {
   test("Stop drains transcript and dispatches", async () => {
+    // SessionStart seeds offset to current EOF (universal post-fix behavior),
+    // so the test starts with an empty transcript and appends the entry AFTER
+    // SessionStart — mirroring real Claude/Codex usage where SessionStart
+    // fires before any content is written to the jsonl.
     const { router, dispatched } = setup();
-    const path = await writeFakeTranscript([
-      { type: "assistant", message: { content: [{ type: "text", text: "answer" }] } }
-    ]);
+    const path = await writeFakeTranscript([]);
     await router.dispatch(
       envelope(
         "SessionStart",
@@ -215,6 +252,9 @@ describe("HookRouter drain-triggering events", () => {
         { window_id: "@0" }
       )
     );
+    await appendToTranscript(path, [
+      { type: "assistant", message: { content: [{ type: "text", text: "answer" }] } }
+    ]);
     await router.dispatch(
       envelope(
         "Stop",
@@ -234,9 +274,7 @@ describe("HookRouter drain-triggering events", () => {
       "SessionEnd"
     ] as const) {
       const { router, dispatched } = setup();
-      const path = await writeFakeTranscript([
-        { type: "assistant", message: { content: [{ type: "text", text: `via-${event}` }] } }
-      ]);
+      const path = await writeFakeTranscript([]);
       await router.dispatch(
         envelope(
           "SessionStart",
@@ -244,6 +282,9 @@ describe("HookRouter drain-triggering events", () => {
           { window_id: "@0" }
         )
       );
+      await appendToTranscript(path, [
+        { type: "assistant", message: { content: [{ type: "text", text: `via-${event}` }] } }
+      ]);
       const before = dispatched.length;
       await router.dispatch(
         envelope(
@@ -476,13 +517,14 @@ describe("HookRouter onTurnEnd", () => {
 
   test("Stop fires onTurnEnd with success outcome AFTER drain completes", async () => {
     const { router, dispatched, turnEnds } = setupWithTurn();
-    const path = await writeFakeTranscript([
-      { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }
-    ]);
+    const path = await writeFakeTranscript([]);
     await router.dispatch(
       envelope("SessionStart", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
     );
     expect(turnEnds).toEqual([]);
+    await appendToTranscript(path, [
+      { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }
+    ]);
     await router.dispatch(
       envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
     );

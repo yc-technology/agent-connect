@@ -148,11 +148,16 @@ export class HookRouter {
     const { payload } = envelope;
     registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
 
-    // `startup`/`clear`/`compact` either start from a fresh transcript or
-    // rewrite it smaller (drainTranscript handles the size-shrink), so they
-    // keep offset 0. Only `resume` needs to skip pre-existing history.
-    const lastByteOffset =
-      payload.source === "resume" ? await offsetSkippingHistory(payload.transcript_path) : 0;
+    // Seed offset to current EOF regardless of source. Invariant: a
+    // SessionStart marks "anything we deliver from now on must be NEW".
+    //   - startup / clear: file is brand-new and empty → EOF = 0, unchanged.
+    //   - resume: file has the full prior conversation → skip it.
+    //   - compact: file is NOT actually truncated (Claude appends a summary
+    //     to the same jsonl) — drain-from-0 would re-emit everything we
+    //     already delivered. The dispatchCompactDone notification below is
+    //     the user-visible "compact finished" signal; the next user prompt
+    //     drains normally from the post-compact EOF.
+    const lastByteOffset = await offsetSkippingHistory(payload.transcript_path);
 
     const args = {
       sessionId: payload.session_id,

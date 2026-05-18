@@ -49,8 +49,10 @@ describe("Fastify /hook/events", () => {
         { window_id: "@7" }
       )
     });
-    await new Promise((r) => setImmediate(r));
-    await new Promise((r) => setImmediate(r));
+    // onSessionStart now awaits an fs.stat (for the universal EOF-skip
+    // offset seeding) before calling registerSession, so we need a couple
+    // more microtask cycles than the previous register-then-return path.
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
     expect(registry.getSessionByWindow("@7")?.session_id).toBe("S");
   });
 
