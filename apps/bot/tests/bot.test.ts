@@ -4,6 +4,7 @@ import {
   BotStateStore,
   buildScreenshotKeyboard,
   escCommand,
+  statusCommand,
   forwardCommandHandler,
   formatUsageReply,
   getThreadId,
@@ -169,6 +170,103 @@ describe("bot session commands", () => {
 
     expect(sendKeys).toHaveBeenCalledWith("@5", "Escape", { enter: false, literal: false });
     expect(reply).toHaveBeenCalledWith("⎋ Sent Escape", formattedOptions);
+  });
+
+  it("status replies with binding + session + last event + tui status line", async () => {
+    const reply = vi.fn();
+    const now = Date.now();
+    await statusCommand(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42 } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        getWindowForThread: () => "@5",
+        getDisplayName: () => "creative-project",
+        getSessionByWindow: () => ({
+          session_id: "202b91bc-4bcb-4ef9-a290-05fff272db82",
+          agent_type: "claude",
+          transcript_path: "/Users/x/.claude/projects/p/202b91bc.jsonl",
+          last_byte_offset: 12345,
+          source: "lazy"
+        }),
+        getLastEvent: () => ({ event: "PostToolUse", at: now - 3000 })
+      },
+      {
+        findWindowById: vi.fn(async () => ({
+          windowId: "@5",
+          windowName: "creative-project",
+          cwd: "/work/proj",
+          paneCurrentCommand: "claude"
+        })),
+        capturePane: vi.fn(
+          async () =>
+            "some output\n" +
+            "✻ Brewed for 5s · ↑ 2.1k tokens · esc to interrupt\n" +
+            "──────────────────────────────────────\n"
+        )
+      }
+    );
+
+    expect(reply).toHaveBeenCalledTimes(1);
+    const [text] = (reply as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(text).toContain("🪟 @5 · creative-project");
+    expect(text).toContain("📁 /work/proj");
+    expect(text).toContain("🆔 202b91bc-4bcb…");
+    expect(text).toContain("claude, lazy");
+    expect(text).toMatch(/⏱  PostToolUse · \ds ago/);
+    expect(text).toContain("📡 Brewed for 5s");
+    expect(text).toContain("📦 12,345 bytes delivered");
+  });
+
+  it("status reports unbound topics", async () => {
+    const reply = vi.fn();
+    await statusCommand(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42 } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        getWindowForThread: () => null,
+        getDisplayName: () => "x",
+        getSessionByWindow: () => null,
+        getLastEvent: () => null
+      },
+      {
+        findWindowById: vi.fn(async () => null),
+        capturePane: vi.fn(async () => "")
+      }
+    );
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("not bound"), formattedOptions);
+  });
+
+  it("status warns when bound window vanished from tmux", async () => {
+    const reply = vi.fn();
+    await statusCommand(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42 } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        getWindowForThread: () => "@5",
+        getDisplayName: () => "creative-project",
+        getSessionByWindow: () => null,
+        getLastEvent: () => null
+      },
+      {
+        findWindowById: vi.fn(async () => null),
+        capturePane: vi.fn(async () => "")
+      }
+    );
+    const [text] = (reply as ReturnType<typeof vi.fn>).mock.calls[0]!;
+    expect(text).toContain("🪟 @5 · creative-project");
+    expect(text).toContain("not found in tmux");
   });
 
   it("unbind removes a topic binding without killing the window", async () => {

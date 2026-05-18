@@ -186,6 +186,33 @@ describe("SessionRegistry bindings", () => {
   });
 });
 
+describe("SessionRegistry lastEvent", () => {
+  test("recordEvent + getLastEvent round trip", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.recordEvent("@0", "Stop", 1000);
+    expect(reg.getLastEvent("@0")).toEqual({ event: "Stop", at: 1000 });
+    reg.recordEvent("@0", "PostToolUse", 2000);
+    expect(reg.getLastEvent("@0")).toEqual({ event: "PostToolUse", at: 2000 });
+  });
+
+  test("getLastEvent returns null when unset", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    expect(reg.getLastEvent("@0")).toBeNull();
+  });
+
+  test("deleteWindow clears lastEvent for that window", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/a");
+    reg.upsertWindow("@1", "y", "/b");
+    reg.recordEvent("@0", "Stop");
+    reg.recordEvent("@1", "Stop");
+    reg.deleteWindow("@0");
+    expect(reg.getLastEvent("@0")).toBeNull();
+    expect(reg.getLastEvent("@1")).not.toBeNull();
+  });
+});
+
 describe("SessionRegistry user_window_offsets", () => {
   test("updateUserWindowOffset round trip", () => {
     const reg = new SessionRegistry(inMemoryDb());

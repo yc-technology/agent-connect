@@ -152,6 +152,41 @@ describe("HookRouter drain-triggering events", () => {
   });
 });
 
+describe("HookRouter records lastEvent on every dispatched event", () => {
+  test("each accepted event updates registry.getLastEvent for its window", async () => {
+    const { registry, router } = setup();
+    const path = await writeFakeTranscript([]);
+    await router.dispatch(
+      envelope("SessionStart", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(registry.getLastEvent("@0")?.event).toBe("SessionStart");
+    await router.dispatch(
+      envelope("PostToolUse", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(registry.getLastEvent("@0")?.event).toBe("PostToolUse");
+    await router.dispatch(
+      envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(registry.getLastEvent("@0")?.event).toBe("Stop");
+  });
+
+  test("foreign-agent events do NOT update lastEvent", async () => {
+    const { registry, router } = setup(); // agentType claude
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        {
+          session_id: "X",
+          transcript_path: "/Users/x/.codex/sessions/foreign.jsonl",
+          cwd: "/a"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(registry.getLastEvent("@0")).toBeNull();
+  });
+});
+
 describe("HookRouter foreign-agent filter", () => {
   test("claude bot ignores SessionStart with codex transcript_path", async () => {
     const { registry, router } = setup();

@@ -34,6 +34,9 @@ export class HookRouter {
   private async handleOne(envelope: HookEnvelope): Promise<void> {
     if (this.shouldIgnore(envelope)) return;
     const event = envelope.payload.hook_event_name as HookEventName;
+    // Record activity timestamp regardless of which branch handles the event —
+    // /status command reads this to answer "what was Claude up to last?".
+    this.deps.registry.recordEvent(envelope.window_id, event);
     switch (event) {
       case "SessionStart":
         return this.onSessionStart(envelope);

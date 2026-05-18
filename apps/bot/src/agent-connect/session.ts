@@ -65,7 +65,14 @@ export interface HistoryMessage {
 }
 
 export interface SessionRegistryLike {
-  getSessionByWindow(windowId: string): { session_id: string } | null;
+  getSessionByWindow(windowId: string): {
+    session_id: string;
+    agent_type?: string;
+    transcript_path?: string;
+    last_byte_offset?: number;
+    source?: string | null;
+  } | null;
+  getLastEvent(windowId: string): { event: string; at: number } | null;
   upsertWindow(windowId: string, displayName: string, cwd: string): void;
   bindThread(userId: number, threadId: number, windowId: string): void;
   unbindThread(userId: number, threadId: number): string | null;
@@ -551,6 +558,18 @@ export class SessionManager {
       if (session && session.messageCount > 0) sessions.push(session);
     }
     return sessions;
+  }
+
+  // Passthroughs to SessionRegistry for read-only callers (notably /status).
+  // Returning null when no registry is wired keeps tests and legacy paths
+  // working — only multiBotRuntime injects a registry today.
+
+  getSessionByWindow(windowId: string) {
+    return this.options.registry?.getSessionByWindow(windowId) ?? null;
+  }
+
+  getLastEvent(windowId: string) {
+    return this.options.registry?.getLastEvent(windowId) ?? null;
   }
 
   async resolveSessionForWindow(windowId: string): Promise<ClaudeSession | null> {

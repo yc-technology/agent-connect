@@ -57,7 +57,7 @@ import {
 import type { MessageQueueManager } from "./messageQueue.js";
 import { textToImage } from "./screenshot.js";
 import type { ClaudeSession, SessionManager } from "./session.js";
-import { parseUsageOutput } from "./terminalParser.js";
+import { parseStatusLine, parseUsageOutput } from "./terminalParser.js";
 import { createGrammyBot } from "./telegramClient.js";
 import { isForumThreadId, PRIVATE_CHAT_THREAD_ID } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
@@ -283,6 +283,66 @@ export async function historyCallbackHandler(
   });
   await editTextWithFallback(ctx, page.text, page.keyboard ? { reply_markup: page.keyboard } : undefined);
   await ctx.answerCallbackQuery("Page updated");
+}
+
+export async function statusCommand(
+  ctx: Pick<Context, "from" | "msg" | "reply">,
+  config: Pick<Config, "isUserAllowed">,
+  sessionManager: Pick<
+    SessionManager,
+    "getWindowForThread" | "getDisplayName" | "getSessionByWindow" | "getLastEvent"
+  >,
+  tmuxManager: Pick<TmuxManager, "findWindowById" | "capturePane">
+): Promise<void> {
+  if (!isUserAllowed(ctx.from?.id, config)) return;
+
+  const threadId = getThreadId(ctx);
+  if (threadId === null) {
+    await replyWithFallback(ctx, "❌ This command only works in a topic.");
+    return;
+  }
+  const userId = ctx.from!.id!;
+  const windowId = sessionManager.getWindowForThread(userId, threadId);
+  if (!windowId) {
+    await replyWithFallback(ctx, "❌ This topic is not bound to any window.");
+    return;
+  }
+
+  const window = await tmuxManager.findWindowById(windowId);
+  const session = sessionManager.getSessionByWindow(windowId);
+  const lastEvent = sessionManager.getLastEvent(windowId);
+  const displayName = sessionManager.getDisplayName(windowId);
+
+  const lines: string[] = [];
+  lines.push(`🪟 ${windowId} · ${displayName}`);
+  if (window?.cwd) {
+    lines.push(`📁 ${window.cwd}`);
+  } else if (!window) {
+    lines.push(`⚠️  Window ${windowId} not found in tmux (may have been killed)`);
+  }
+  if (session) {
+    const shortId = session.session_id.slice(0, 13) + "…";
+    const tags = [session.agent_type, session.source].filter(Boolean).join(", ");
+    lines.push(`🆔 ${shortId}${tags ? ` (${tags})` : ""}`);
+  }
+  if (lastEvent) {
+    const ageSec = Math.round((Date.now() - lastEvent.at) / 1000);
+    lines.push(`⏱  ${lastEvent.event} · ${ageSec}s ago`);
+  } else if (session) {
+    lines.push(`⏱  no hook event received yet`);
+  }
+  if (window) {
+    const paneText = await tmuxManager.capturePane(window.windowId);
+    const statusLine = paneText ? parseStatusLine(paneText) : null;
+    if (statusLine) {
+      lines.push(`📡 ${statusLine}`);
+    }
+  }
+  if (session?.transcript_path && typeof session.last_byte_offset === "number") {
+    lines.push(`📦 ${session.last_byte_offset.toLocaleString()} bytes delivered`);
+  }
+
+  await replyWithFallback(ctx, lines.join("\n"));
 }
 
 export async function escCommand(
@@ -1003,6 +1063,8 @@ export function registerBotHandlers(
     | "getWindowState"
     | "saveState"
     | "updateDisplayName"
+    | "getSessionByWindow"
+    | "getLastEvent"
   >,
   tmuxManager: Pick<
     TmuxManager,
@@ -1023,6 +1085,7 @@ export function registerBotHandlers(
   bot.command("history", (ctx) => historyCommand(ctx, config, sessionManager));
   bot.command("screenshot", (ctx) => screenshotCommand(ctx, config, sessionManager, tmuxManager));
   bot.command("esc", (ctx) => escCommand(ctx, config, sessionManager, tmuxManager));
+  bot.command("status", (ctx) => statusCommand(ctx, config, sessionManager, tmuxManager));
   bot.command("unbind", (ctx) => unbindCommand(ctx, config, sessionManager, handlerOptions));
   bot.command("kill", (ctx) => killCommand(ctx, config, sessionManager, tmuxManager, handlerOptions));
   bot.command("usage", (ctx) => usageCommand(ctx, config, sessionManager, tmuxManager));
@@ -1067,6 +1130,8 @@ export function createTelegramBot(
     | "getWindowState"
     | "saveState"
     | "updateDisplayName"
+    | "getSessionByWindow"
+    | "getLastEvent"
   >,
   tmuxManager: Pick<
     TmuxManager,

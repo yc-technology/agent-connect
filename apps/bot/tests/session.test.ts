@@ -421,6 +421,7 @@ describe("SessionManager registry dual-write", () => {
     return {
       calls: { upserts, binds, unbinds, groupChats },
       getSessionByWindow: () => null,
+      getLastEvent: () => null,
       upsertWindow: (windowId: string, displayName: string, cwd: string) => {
         upserts.push([windowId, displayName, cwd]);
       },

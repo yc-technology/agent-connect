@@ -79,8 +79,17 @@ CREATE TABLE IF NOT EXISTS user_window_offsets (
 );
 `;
 
+export interface LastEventRecord {
+  event: string;
+  at: number;
+}
+
 export class SessionRegistry {
   private readonly locks = new Map<string, Promise<unknown>>();
+  // In-memory only — keyed by windowId so /status (which queries by window)
+  // is a single lookup and SessionStart's DELETE+INSERT naturally overwrites
+  // without leaving orphans. deleteWindow() clears the entry.
+  private readonly lastEventByWindow = new Map<string, LastEventRecord>();
 
   constructor(private readonly db: Database.Database) {
     db.pragma("foreign_keys = ON");
@@ -113,7 +122,16 @@ export class SessionRegistry {
   }
 
   deleteWindow(windowId: string): void {
+    this.lastEventByWindow.delete(windowId);
     this.db.prepare("DELETE FROM windows WHERE window_id = ?").run(windowId);
+  }
+
+  recordEvent(windowId: string, event: string, at: number = Date.now()): void {
+    this.lastEventByWindow.set(windowId, { event, at });
+  }
+
+  getLastEvent(windowId: string): LastEventRecord | null {
+    return this.lastEventByWindow.get(windowId) ?? null;
   }
 
   listLiveWindows(): WindowRow[] {
