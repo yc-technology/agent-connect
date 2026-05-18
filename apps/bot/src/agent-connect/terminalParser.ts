@@ -74,6 +74,19 @@ const UI_PATTERNS: UIPattern[] = [
     bottom: [/Type to search\s*·\s*Esc to cancel/],
     minGap: 2
   },
+  {
+    // Shown AFTER picking a long-running session in `/resume` — Claude warns
+    // about token usage and asks whether to resume from summary, full, or skip.
+    // Numbered choices (Resume from summary / Resume full as-is / Don't ask) +
+    // standard `Enter to confirm · Esc to cancel` footer.
+    name: "ResumeSummaryPrompt",
+    top: [
+      /^\s*This session is .+ old and .+ tokens\./,
+      /^\s*Resuming the full session will consume/
+    ],
+    bottom: [/^\s*Enter to confirm\s*·\s*Esc to cancel/],
+    minGap: 2
+  },
   // ─── Codex TUI prompts ───
   // Codex shapes its interactive prompts differently from Claude:
   //   - AskUserQuestion uses a "Question N/M" header + "›" cursor + numbered

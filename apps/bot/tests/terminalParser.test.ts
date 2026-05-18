@@ -172,6 +172,32 @@ describe("interactive UI extraction", () => {
     expect(result?.content).not.toContain("❯ /resume");
   });
 
+  it("extracts Claude ResumeSummaryPrompt (long-session warning after /resume)", () => {
+    // Claude shows this AFTER selecting an old, large session in the /resume
+    // picker: it advises resuming from a summary to save tokens.
+    const pane =
+      "❯ 为什么 account 的选择框前面有空的距离\n" +
+      "\n" +
+      "───────────────────────────────────────\n" +
+      "  This session is 4h 59m old and 503.4k tokens.\n" +
+      "\n" +
+      "  Resuming the full session will consume a substantial portion of your usage limits. We recommend\n" +
+      "  resuming from a summary.\n" +
+      "\n" +
+      "  ❯ 1. Resume from summary (recommended)\n" +
+      "    2. Resume full session as-is\n" +
+      "    3. Don't ask me again\n" +
+      "\n" +
+      "  Enter to confirm · Esc to cancel\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("ResumeSummaryPrompt");
+    expect(result?.content).toContain("This session is 4h 59m old");
+    expect(result?.content).toContain("❯ 1. Resume from summary");
+    expect(result?.content).toContain("Enter to confirm · Esc to cancel");
+    // Must not bleed the prompt input line above into the extraction.
+    expect(result?.content).not.toContain("为什么 account");
+  });
+
   it("extracts Codex AskUserQuestion (numbered options + tab/enter/esc footer)", () => {
     // Real Codex 0.130 pane capture during an AskUserQuestion prompt.
     const pane =
