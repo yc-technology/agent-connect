@@ -15,9 +15,13 @@ const CLAUDE_HOOK_EVENTS = [
   "PostToolUse",
   "PostToolBatch",
   "PostToolUseFailure",
-  "PermissionRequest",
   "Stop",
   "Notification"
+  // PermissionRequest deliberately omitted: Claude's TUI shows a clickable
+  // prompt (handled by StatusPoller + interactiveUi via tmux pane matching),
+  // which is richer than a plain status text and gives the user inline
+  // keyboard buttons. Adding the hook would duplicate that with a less
+  // useful text-only message. Codex still installs it (no TUI matcher).
 ] as const;
 
 const CLAUDE_SESSION_START_MATCHER = "startup|resume|clear|compact";
