@@ -69,12 +69,23 @@ const UI_PATTERNS: UIPattern[] = [
   //   - AskUserQuestion uses a "Question N/M" header + "›" cursor + numbered
   //     options + "tab to add notes | enter to submit answer | esc to interrupt"
   //     footer (instead of Claude's ☐/☑/☒ checkbox glyphs).
+  //   - PermissionPrompt asks "Would you like to run the following command?"
+  //     and ends with "Press enter to confirm or esc to cancel".
   // Reuses the same logical names so handleInteractiveUi + keyboard layout
   // work unchanged — only the matcher is Codex-specific.
   {
     name: "AskUserQuestion",
     top: [/^\s*Question\s+\d+\/\d+/],
     bottom: [/^\s*tab to add notes\s*\|\s*enter to submit answer/i],
+    minGap: 2
+  },
+  {
+    name: "PermissionPrompt",
+    top: [
+      /^\s*Would you like to run the following command\?/,
+      /^\s*Would you like to apply the following (?:edit|patch|change)/i
+    ],
+    bottom: [/^\s*Press enter to confirm or esc to cancel/i],
     minGap: 2
   }
 ];

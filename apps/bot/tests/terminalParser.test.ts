@@ -67,6 +67,35 @@ describe("interactive UI extraction", () => {
     expect(isInteractiveUi("")).toBe(false);
   });
 
+  it("extracts Codex PermissionPrompt (Would you like to run + Press enter to confirm)", () => {
+    const pane =
+      "› 现在可以了你再试试\n" +
+      "\n" +
+      "• 我用一个安全的 GUI 操作来测试：\n" +
+      "\n" +
+      "• Running open /tmp/foo.png\n" +
+      "\n" +
+      "  Would you like to run the following command?\n" +
+      "\n" +
+      "  Reason: 是否允许打开本地截图文件来测试权限审批交互？\n" +
+      "\n" +
+      "  $ open\n" +
+      "  /tmp/foo.png\n" +
+      "\n" +
+      "› 1. Yes, proceed (y)\n" +
+      "  2. Yes, and don't ask again for commands that start with `open /tmp` (p)\n" +
+      "  3. No, and tell Codex what to do differently (esc)\n" +
+      "\n" +
+      "  Press enter to confirm or esc to cancel\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("PermissionPrompt");
+    expect(result?.content).toContain("Would you like to run the following command?");
+    expect(result?.content).toContain("Reason:");
+    expect(result?.content).toContain("› 1. Yes, proceed");
+    expect(result?.content).toContain("Press enter to confirm");
+    expect(result?.content).not.toContain("现在可以了你再试试");
+  });
+
   it("extracts Codex AskUserQuestion (numbered options + tab/enter/esc footer)", () => {
     // Real Codex 0.130 pane capture during an AskUserQuestion prompt.
     const pane =
