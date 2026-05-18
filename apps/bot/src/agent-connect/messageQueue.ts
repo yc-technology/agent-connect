@@ -34,7 +34,12 @@ type StatusKey = `${number}:${number}`;
 
 export class MessageQueueManager {
   private readonly queues = new Map<number, MessageTask[]>();
-  private readonly processing = new Set<number>();
+  // Chained promises so concurrent drain(userId) callers serialize and each
+  // caller's `await` resolves only after THEIR queued work has been processed.
+  // The old `processing: Set<number>` single-flight returned early from later
+  // callers, breaking the await contract — Stop's reaction would then fire
+  // before that turn's assistant text had been sent + recorded.
+  private readonly drainChains = new Map<number, Promise<void>>();
   private readonly toolMessageIds = new Map<ToolKey, number>();
   private readonly statusMessageInfo = new Map<StatusKey, { messageId: number; windowId: string; text: string }>();
   // Tracks the id of the most recent assistant TEXT message sent per (user, thread).
@@ -108,12 +113,29 @@ export class MessageQueueManager {
   }
 
   async drain(userId: number): Promise<void> {
-    if (this.processing.has(userId)) return;
-    this.processing.add(userId);
+    const prev = this.drainChains.get(userId) ?? Promise.resolve();
+    // Chain even on prev rejection so a single bad task doesn't stall the
+    // chain forever. The inner loop also catches per-task errors so failures
+    // in one message don't poison subsequent ones.
+    const myTurn = prev.then(
+      () => this.runDrainLoop(userId),
+      () => this.runDrainLoop(userId)
+    );
+    this.drainChains.set(userId, myTurn);
     try {
-      const queue = this.queues.get(userId);
-      while (queue && queue.length > 0) {
-        const task = queue.shift()!;
+      await myTurn;
+    } finally {
+      if (this.drainChains.get(userId) === myTurn) {
+        this.drainChains.delete(userId);
+      }
+    }
+  }
+
+  private async runDrainLoop(userId: number): Promise<void> {
+    const queue = this.queues.get(userId);
+    while (queue && queue.length > 0) {
+      const task = queue.shift()!;
+      try {
         if (task.taskType === "content") {
           const merged = this.mergeContentTasks(task, queue);
           await this.processContentTask(userId, merged);
@@ -122,9 +144,9 @@ export class MessageQueueManager {
         } else {
           await this.clearStatusMessage(userId, task.threadId ?? 0);
         }
+      } catch (err) {
+        console.warn("[messageQueue task]", err);
       }
-    } finally {
-      this.processing.delete(userId);
     }
   }
 
@@ -240,9 +262,6 @@ export class MessageQueueManager {
 
     if (lastMessageId && task.role === "assistant" && task.contentType === "text") {
       this.lastAssistantMessageIds.set(statusKey(userId, tid), lastMessageId);
-      console.warn(`[last-asst] recorded uid=${userId} tid=${tid} msg=${lastMessageId} parts=${task.parts.length}`);
-    } else if (lastMessageId) {
-      console.warn(`[last-asst] SKIPPED uid=${userId} tid=${tid} role=${task.role} ct=${task.contentType}`);
     }
 
     await this.sendTaskImages(chatId, task);

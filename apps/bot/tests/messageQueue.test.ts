@@ -240,6 +240,47 @@ describe("message queue last assistant message id", () => {
     expect(manager.getLastAssistantMessageId(100, 42)).toBe(3);
   });
 
+  it("concurrent drains serialize — second await waits for ITS work, not just for the existing drain to no-op", async () => {
+    fake = fakeApi();
+    // 50ms-per-send slowdown so first drain is unambiguously still in flight
+    // when the second drain is invoked.
+    const slowApi: TelegramApiLike & typeof fake = {
+      ...fake,
+      sendMessage: vi.fn(async (_chatId, text) => {
+        await new Promise((r) => setTimeout(r, 50));
+        const id = (slowApi.messages.push(text), slowApi.messages.length);
+        return { message_id: id };
+      })
+    } as never;
+    const manager = queue(slowApi);
+
+    manager.enqueueContentMessage(100, "@1", ["first"], {
+      contentType: "text",
+      role: "assistant",
+      threadId: 42
+    });
+    const first = manager.drain(100);
+
+    // Stop-event flow: a new assistant text is enqueued + drained while the
+    // first send is still mid-flight.
+    manager.enqueueContentMessage(100, "@1", ["second"], {
+      contentType: "text",
+      role: "assistant",
+      threadId: 42
+    });
+    const second = manager.drain(100);
+
+    await second;
+
+    // CRITICAL: after `await second` resolves, lastAssistantMessageId must
+    // reflect the SECOND send (msg 2). Pre-fix the second drain() returned
+    // immediately due to the `processing` single-flight, so "second" was
+    // still queued and msg 1 was still being sent — Stop's onTurnEnd would
+    // then react on msg 1 (or null), never on msg 2.
+    expect(manager.getLastAssistantMessageId(100, 42)).toBe(2);
+    await first;
+  });
+
   it("clearLastAssistantMessageId is per-topic", async () => {
     fake = fakeApi();
     const manager = queue();
