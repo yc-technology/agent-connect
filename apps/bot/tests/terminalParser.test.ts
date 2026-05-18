@@ -82,6 +82,19 @@ describe("parseStatusLine", () => {
     expect(isCompletedStatusLine("Sautéing for 17s")).toBe(false);
     expect(isCompletedStatusLine("Reading file")).toBe(false);
   });
+
+  it("identifies completed status lines with a `· side note` suffix", () => {
+    // Claude appends background state after the duration with a middle-dot
+    // separator: "Brewed for 34s · 1 shell still running" / "... · 2 shells
+    // still running". Still a completion — should clear the Telegram status.
+    expect(isCompletedStatusLine("Brewed for 34s · 1 shell still running")).toBe(true);
+    expect(isCompletedStatusLine("Cooked for 5s · 2 shells still running")).toBe(true);
+    expect(isCompletedStatusLine("Sautéed for 17s · 1 background task")).toBe(true);
+    expect(isCompletedStatusLine("Brewed for 34s·1 shell")).toBe(true); // no space around ·
+    // Negative: still need the duration before the dot.
+    expect(isCompletedStatusLine("Brewed · 1 shell still running")).toBe(false);
+    expect(isCompletedStatusLine("Brewed for · 1 shell")).toBe(false);
+  });
 });
 
 describe("interactive UI extraction", () => {

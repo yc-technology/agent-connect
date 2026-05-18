@@ -239,12 +239,15 @@ export function parseStatusLine(paneText: string): string | null {
 // "already finished" and clears the Telegram status so the next content
 // message lands as a fresh send instead of overwriting a stale spinner.
 //
-// Use `\p{L}` (Unicode letter) not `[A-Za-z]` — Claude's verb pool includes
-// accented words like "Sautéed for 17s" / "Flambéed for 5s" that the
-// ASCII-only class silently skipped, leaving them visible in Telegram until
-// the next content arrived and edited them away.
+// Edge cases the regex must cover:
+//   - Accented verbs from Claude's pool: "Sautéed for 17s", "Flambéed for 5s".
+//     Use `\p{L}` (Unicode letter), not `[A-Za-z]`.
+//   - Optional middle-dot side note after the duration:
+//     "Brewed for 34s · 1 shell still running" — Claude appends background
+//     state with `· <note>` when relevant. Treat the whole line as completed
+//     so the status clears.
 export function isCompletedStatusLine(statusLine: string): boolean {
-  return /^\p{L}[\p{L} -]*ed for \d+(?:\.\d+)?s$/u.test(statusLine.trim());
+  return /^\p{L}[\p{L} -]*ed for \d+(?:\.\d+)?s(?:\s*·.*)?$/u.test(statusLine.trim());
 }
 
 export function stripPaneChrome(lines: string[]): string[] {
