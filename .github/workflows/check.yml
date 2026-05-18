@@ -28,6 +28,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Force native modules (better-sqlite3 / sharp / esbuild) to fetch /
+      # build their bindings even when the pnpm store cache already has the
+      # tarball — cache hits otherwise skip the install script and tests
+      # fail with "Could not locate the bindings file".
+      - run: pnpm rebuild better-sqlite3 sharp esbuild
+
       # Build first so workspace subpath exports (e.g. @agent-connect/bot/service,
       # @agent-connect/bot/hookClient) resolve to dist/*.d.ts. Without this the
       # CLI package's typecheck fails to find those modules.
