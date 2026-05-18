@@ -214,7 +214,6 @@ export class MessageQueueManager {
     const threadId = task.threadId ?? null;
     const tid = threadId ?? 0;
     const chatId = this.routing.resolveChatId(userId, threadId);
-    console.warn(`[content] uid=${userId} tid=${tid} role=${task.role} ct=${task.contentType} parts=${task.parts.length} firstChars=${JSON.stringify((task.parts[0] ?? "").slice(0, 40))}`);
 
     if (task.contentType === "tool_result" && task.toolUseId) {
       const key = toolKey(task.toolUseId, userId, tid);
@@ -244,7 +243,6 @@ export class MessageQueueManager {
         firstPart = false;
         const converted = await this.convertStatusToContent(userId, tid, windowId, part);
         if (converted !== null) {
-          console.warn(`[content]   converted-from-status msg=${converted}`);
           lastMessageId = converted;
           this.recordTopicProbeMessageId(userId, threadId, converted);
           continue;
@@ -253,11 +251,8 @@ export class MessageQueueManager {
 
       const sent = await sendWithFallback(this.api, chatId, part, sendOptions(threadId));
       if (sent) {
-        console.warn(`[content]   sent msg=${sent.message_id}`);
         lastMessageId = sent.message_id;
         this.recordTopicProbeMessageId(userId, threadId, sent.message_id);
-      } else {
-        console.warn(`[content]   ✗ sendWithFallback returned null`);
       }
     }
 
