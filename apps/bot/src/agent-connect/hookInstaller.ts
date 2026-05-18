@@ -30,9 +30,15 @@ const CODEX_HOOK_EVENTS = [
   "SessionStart",
   "UserPromptSubmit",
   "PreToolUse",
-  "PermissionRequest",
   "PostToolUse",
   "Stop"
+  // PermissionRequest deliberately omitted (since terminalParser.UI_PATTERNS
+  // started matching 'Would you like to run the following command?' and
+  // 'Would you like to make the following edits?'). The TUI-driven path
+  // surfaces a Telegram message WITH inline keyboard buttons (↑↓ Enter Esc)
+  // that are translated to tmux send-keys — much more actionable than a
+  // plain-text 'Approval needed: ...' status. The HookRouter handler stays
+  // in place as defense-in-depth in case the install list ever changes.
 ] as const;
 
 const CODEX_SESSION_START_MATCHER = "startup|resume|clear";
