@@ -15,6 +15,7 @@ const CLAUDE_HOOK_EVENTS = [
   "PostToolUse",
   "PostToolBatch",
   "PostToolUseFailure",
+  "PermissionRequest",
   "Stop",
   "Notification"
 ] as const;
