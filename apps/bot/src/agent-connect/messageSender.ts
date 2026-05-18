@@ -216,11 +216,28 @@ export async function sendPhoto(
 }
 
 export function isRetryAfter(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    ("retry_after" in error || "retryAfter" in error)
-  );
+  return retryAfterSeconds(error) !== null;
+}
+
+/**
+ * Extract the server-supplied retry-after value (seconds) from a Telegram 429.
+ * Recognized shapes:
+ *   - `{ retry_after: 25 }` / `{ retryAfter: 25 }` (legacy direct fields)
+ *   - `{ parameters: { retry_after: 25 } }` (grammY GrammyError shape)
+ * Returns null if the error is not a recognized rate-limit error.
+ */
+export function retryAfterSeconds(error: unknown): number | null {
+  if (typeof error !== "object" || error === null) return null;
+  const e = error as Record<string, unknown>;
+  const direct = e.retry_after ?? e.retryAfter;
+  if (typeof direct === "number") return direct;
+  const params = e.parameters;
+  if (typeof params === "object" && params !== null) {
+    const p = params as Record<string, unknown>;
+    const fromParams = p.retry_after ?? p.retryAfter;
+    if (typeof fromParams === "number") return fromParams;
+  }
+  return null;
 }
 
 function logFormatFallback(operation: string, error: unknown): void {

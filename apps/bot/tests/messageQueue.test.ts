@@ -106,6 +106,90 @@ describe("message queue status handling", () => {
     expect(manager.getStatusMessageInfo(100, 42)).toBeNull();
   });
 
+  it("throttles consecutive status edits and resumes after cooldown", async () => {
+    vi.useFakeTimers({ now: 1_000_000 });
+    try {
+      fake = fakeApi();
+      const manager = queue();
+
+      // Initial send establishes the message — no cooldown set yet.
+      manager.enqueueStatusUpdate(100, "@1", "tick 1", 42);
+      await manager.drain(100);
+      expect(fake.messages).toEqual(["tick 1"]);
+
+      // First edit goes through and starts the 1500ms cooldown.
+      vi.setSystemTime(1_000_100);
+      manager.enqueueStatusUpdate(100, "@1", "tick 2", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual(["tick 2"]);
+
+      // ~500ms later — still inside cooldown, swallowed.
+      vi.setSystemTime(1_000_600);
+      manager.enqueueStatusUpdate(100, "@1", "tick 3", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual(["tick 2"]);
+
+      // ~1300ms after the throttled edit started — still inside cooldown.
+      vi.setSystemTime(1_001_400);
+      manager.enqueueStatusUpdate(100, "@1", "tick 4", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual(["tick 2"]);
+
+      // Past the cooldown — the next text actually edits through.
+      vi.setSystemTime(1_001_700);
+      manager.enqueueStatusUpdate(100, "@1", "tick 5", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual(["tick 2", "tick 5"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("backs off status edits for the server-supplied retry_after on 429", async () => {
+    vi.useFakeTimers({ now: 2_000_000 });
+    try {
+      fake = fakeApi();
+      // The 1st edit throws a grammY-style 429; subsequent calls succeed.
+      let editCount = 0;
+      fake.editMessageText = vi.fn(async (_chatId, _messageId, text) => {
+        editCount += 1;
+        if (editCount === 1) {
+          // grammY GrammyError shape: { parameters: { retry_after: N } }
+          const err = Object.assign(new Error("429: Too Many Requests: retry after 5"), {
+            parameters: { retry_after: 5 }
+          });
+          throw err;
+        }
+        fake.edits.push(text);
+      }) as TelegramApiLike["editMessageText"];
+      const manager = queue();
+
+      manager.enqueueStatusUpdate(100, "@1", "initial", 42);
+      await manager.drain(100);
+      expect(fake.messages).toEqual(["initial"]);
+
+      // First edit hits 429 → 5s server-supplied backoff installed (+250ms cushion).
+      vi.setSystemTime(2_000_100);
+      manager.enqueueStatusUpdate(100, "@1", "second", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual([]); // edit threw, nothing landed
+
+      // 3 seconds later — still inside the 5s backoff.
+      vi.setSystemTime(2_003_500);
+      manager.enqueueStatusUpdate(100, "@1", "third", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual([]);
+
+      // ~5.5 seconds after the 429 → cooldown expired → next edit goes through.
+      vi.setSystemTime(2_005_600);
+      manager.enqueueStatusUpdate(100, "@1", "fourth", 42);
+      await manager.drain(100);
+      expect(fake.edits).toEqual(["fourth"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("converts status message to first content message", async () => {
     fake = fakeApi();
     const manager = queue();

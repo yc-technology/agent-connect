@@ -1,9 +1,15 @@
 import {
   editWithFallback,
+  retryAfterSeconds,
   sendPhoto,
   sendWithFallback,
   type TelegramApiLike
 } from "./messageSender.js";
+
+// Minimum spacing between successive status edits on the same (user, thread).
+// 1500ms is comfortably under Telegram's typical edit rate cap and keeps
+// status text reasonably fresh during /compact and similar progress UIs.
+const STATUS_EDIT_THROTTLE_MS = 1500;
 import { isForumThreadId, threadOptions } from "./telegramThread.js";
 import type { ToolResultImage } from "./transcriptParser.js";
 
@@ -42,6 +48,13 @@ export class MessageQueueManager {
   private readonly drainChains = new Map<number, Promise<void>>();
   private readonly toolMessageIds = new Map<ToolKey, number>();
   private readonly statusMessageInfo = new Map<StatusKey, { messageId: number; windowId: string; text: string }>();
+  // Throttle status edits per (user, thread). Telegram caps editMessageText at
+  // roughly 1/sec/chat in steady state; bursts (e.g. /compact progress ticking
+  // every second) trigger 429 "Too Many Requests". We skip edits attempted
+  // within STATUS_EDIT_THROTTLE_MS of the last one; statusPolling re-fires
+  // every 1s and will eventually deliver the latest text. On 429, the
+  // throttle extends to the server-supplied retry_after value.
+  private readonly statusEditCooldownUntil = new Map<StatusKey, number>();
   // Tracks the id of the most recent assistant TEXT message sent per (user, thread).
   // HookRouter's onTurnEnd reads this to attach a "turn done" reaction. We only
   // record text-role assistant sends — never tool_use / tool_result / thinking —
@@ -151,7 +164,9 @@ export class MessageQueueManager {
   }
 
   clearStatusMsgInfo(userId: number, threadId: number | null = null): void {
-    this.statusMessageInfo.delete(statusKey(userId, threadId ?? 0));
+    const key = statusKey(userId, threadId ?? 0);
+    this.statusMessageInfo.delete(key);
+    this.statusEditCooldownUntil.delete(key);
   }
 
   clearToolMsgIdsForTopic(userId: number, threadId: number | null = null): void {
@@ -295,12 +310,34 @@ export class MessageQueueManager {
 
     if (current.text === text) return;
 
-    const edited = await editWithFallback(this.api, chatId, current.messageId, text, sendOptions(threadId));
-    if (edited) {
-      this.statusMessageInfo.set(key, { messageId: current.messageId, windowId, text });
-    } else {
-      this.statusMessageInfo.delete(key);
-      await this.sendStatusMessage(userId, tid, windowId, text);
+    const now = Date.now();
+    const cooldownUntil = this.statusEditCooldownUntil.get(key) ?? 0;
+    if (now < cooldownUntil) {
+      // statusPolling will re-enqueue with the latest text after the cooldown
+      // expires. We drop this attempt entirely rather than queueing — if the
+      // text changes again in the meantime, the next poll picks it up.
+      return;
+    }
+
+    try {
+      const edited = await editWithFallback(this.api, chatId, current.messageId, text, sendOptions(threadId));
+      if (edited) {
+        this.statusMessageInfo.set(key, { messageId: current.messageId, windowId, text });
+        this.statusEditCooldownUntil.set(key, Date.now() + STATUS_EDIT_THROTTLE_MS);
+      } else {
+        this.statusMessageInfo.delete(key);
+        await this.sendStatusMessage(userId, tid, windowId, text);
+      }
+    } catch (error) {
+      const retryAfter = retryAfterSeconds(error);
+      if (retryAfter !== null) {
+        // Park status edits for this key until the server-supplied retry window
+        // passes (with a small cushion). Don't fall back to sendStatusMessage —
+        // it would burn rate budget on a brand-new message instead.
+        this.statusEditCooldownUntil.set(key, Date.now() + retryAfter * 1000 + 250);
+        return;
+      }
+      throw error;
     }
   }
 
