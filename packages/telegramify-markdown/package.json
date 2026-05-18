@@ -1,8 +1,27 @@
 {
   "name": "@agent-connect/telegramify-markdown",
-  "version": "1.1.5",
+  "version": "0.1.0",
   "type": "module",
-  "description": "Convert Markdown to Telegram text, MessageEntity objects, and MarkdownV2",
+  "description": "Convert Markdown to Telegram HTML / text / MessageEntity objects / MarkdownV2",
+  "keywords": [
+    "telegram",
+    "markdown",
+    "html",
+    "telegramify",
+    "messageentity",
+    "markdownv2"
+  ],
+  "license": "MIT",
+  "author": "Django <six.django@gmail.com>",
+  "homepage": "https://github.com/yc-technology/agent-connect/tree/main/packages/telegramify-markdown#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yc-technology/agent-connect.git",
+    "directory": "packages/telegramify-markdown"
+  },
+  "bugs": {
+    "url": "https://github.com/yc-technology/agent-connect/issues"
+  },
   "main": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
   "exports": {
@@ -12,7 +31,9 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"

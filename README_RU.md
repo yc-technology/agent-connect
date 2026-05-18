@@ -62,7 +62,7 @@ agc help
 
 ```bash
 pnpm -r publish
-npm install -g agent-connect
+npm install -g @agent-connect/cli
 ```
 
 ## Telegram Setup

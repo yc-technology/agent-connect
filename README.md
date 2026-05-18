@@ -62,7 +62,7 @@ For npm distribution, publish the workspace packages and install the CLI package
 
 ```bash
 pnpm -r publish
-npm install -g agent-connect
+npm install -g @agent-connect/cli
 ```
 
 ## Telegram Setup

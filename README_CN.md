@@ -60,7 +60,7 @@ npm 发布后可以直接安装 CLI：
 
 ```bash
 pnpm -r publish
-npm install -g agent-connect
+npm install -g @agent-connect/cli
 ```
 
 ## Telegram 设置

@@ -1,13 +1,35 @@
 {
-  "name": "agent-connect",
+  "name": "@agent-connect/cli",
   "version": "0.1.0",
   "type": "module",
-  "description": "Agent Connect command line tools",
+  "description": "Agent Connect command line — bridges Telegram Forum topics to Claude Code / Codex sessions in tmux",
+  "keywords": [
+    "telegram",
+    "claude",
+    "claude-code",
+    "codex",
+    "tmux",
+    "agent",
+    "cli"
+  ],
+  "license": "MIT",
+  "author": "Django <six.django@gmail.com>",
+  "homepage": "https://github.com/yc-technology/agent-connect#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yc-technology/agent-connect.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/yc-technology/agent-connect/issues"
+  },
   "bin": {
     "agc": "./dist/src/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "access": "public"
