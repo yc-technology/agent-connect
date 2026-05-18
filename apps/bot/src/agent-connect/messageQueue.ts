@@ -13,6 +13,31 @@ import type { ToolResultImage } from "./transcriptParser.js";
 // status text reasonably fresh during /compact and similar progress UIs.
 const STATUS_EDIT_THROTTLE_MS = 1500;
 
+// Max attempts when retrying after a Telegram 429 on a CONTENT send/edit.
+// Content can't be silently dropped on rate limit (unlike status, which
+// statusPolling will re-deliver on the next tick), so we honor the
+// server-supplied retry_after and retry. Bounded so a persistently 429ing
+// chat doesn't stall the queue forever — after the budget is exhausted
+// we log + give up and move on.
+const CONTENT_RETRY_AFTER_MAX_ATTEMPTS = 4;
+
+/**
+ * Call `fn`. If it throws a recognized retry-after error, sleep the
+ * server-supplied seconds (+250ms cushion) and retry, up to `maxAttempts`
+ * total attempts. Any non-retry-after error re-throws immediately.
+ */
+async function withRetryAfter<T>(fn: () => Promise<T>, maxAttempts = CONTENT_RETRY_AFTER_MAX_ATTEMPTS): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      const retryAfter = retryAfterSeconds(err);
+      if (retryAfter === null || attempt >= maxAttempts) throw err;
+      await new Promise((r) => setTimeout(r, retryAfter * 1000 + 250));
+    }
+  }
+}
+
 export type MessageTaskType = "content" | "status_update" | "status_clear";
 export type MessageTaskRole = "user" | "assistant";
 
@@ -246,12 +271,8 @@ export class MessageQueueManager {
         this.toolMessageIds.delete(key);
         await this.clearStatusMessage(userId, tid);
         const fullText = task.parts.join("\n\n");
-        const edited = await editWithFallback(
-          this.api,
-          chatId,
-          editMessageId,
-          fullText,
-          sendOptions(threadId)
+        const edited = await withRetryAfter(() =>
+          editWithFallback(this.api, chatId, editMessageId, fullText, sendOptions(threadId))
         );
         if (edited) {
           await this.sendTaskImages(chatId, task);
@@ -273,7 +294,12 @@ export class MessageQueueManager {
         }
       }
 
-      const sent = await sendWithFallback(this.api, chatId, part, sendOptions(threadId));
+      // Retry on 429 — content is user-visible data we can't silently drop.
+      // withRetryAfter sleeps the server-supplied delay and retries up to
+      // CONTENT_RETRY_AFTER_MAX_ATTEMPTS times. Other errors propagate.
+      const sent = await withRetryAfter(() =>
+        sendWithFallback(this.api, chatId, part, sendOptions(threadId))
+      );
       if (sent) {
         lastMessageId = sent.message_id;
         this.recordTopicProbeMessageId(userId, threadId, sent.message_id);

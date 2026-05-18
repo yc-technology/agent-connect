@@ -221,6 +221,72 @@ describe("message queue status handling", () => {
     expect(fake.messages).toEqual(["Thinking...", "final answer"]);
   });
 
+  it("content send retries past a transient 429 and delivers the message", async () => {
+    vi.useFakeTimers({ now: 3_000_000 });
+    try {
+      fake = fakeApi();
+      let sendCount = 0;
+      const flakeyThen429ThenOk: NonNullable<TelegramApiLike["sendMessage"]> = vi.fn(
+        async (_chatId, text) => {
+          sendCount += 1;
+          if (sendCount === 1) {
+            const err = Object.assign(new Error("429: Too Many Requests: retry after 1"), {
+              parameters: { retry_after: 1 }
+            });
+            throw err;
+          }
+          fake.messages.push(text);
+          return { message_id: sendCount };
+        }
+      );
+      fake.sendMessage = flakeyThen429ThenOk;
+      const manager = queue();
+
+      manager.enqueueContentMessage(100, "@1", ["important answer"], { threadId: 42 });
+      const drainP = manager.drain(100);
+      // Let the first send attempt throw, then advance timers past the 1s
+      // server-supplied backoff so the withRetryAfter wrapper retries.
+      await vi.advanceTimersByTimeAsync(1500);
+      await drainP;
+      expect(sendCount).toBe(2);
+      expect(fake.messages).toEqual(["important answer"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("content send gives up after the retry budget is exhausted", async () => {
+    vi.useFakeTimers({ now: 4_000_000 });
+    try {
+      fake = fakeApi();
+      let sendCount = 0;
+      const always429: NonNullable<TelegramApiLike["sendMessage"]> = vi.fn(async () => {
+        sendCount += 1;
+        const err = Object.assign(new Error("429"), { parameters: { retry_after: 1 } });
+        throw err;
+      });
+      fake.sendMessage = always429;
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const manager = queue();
+
+      manager.enqueueContentMessage(100, "@1", ["doomed"], { threadId: 42 });
+      const drainP = manager.drain(100);
+      // Advance enough time for all retries to play out (3 sleeps of ~1.25s
+      // between 4 attempts).
+      await vi.advanceTimersByTimeAsync(10_000);
+      await drainP;
+      // 4 attempts: initial + 3 retries. After the 4th throw, withRetryAfter
+      // gives up and re-throws; runDrainLoop catches + warns. Bounded — no
+      // infinite loop.
+      expect(sendCount).toBe(4);
+      expect(fake.messages).toEqual([]);
+      expect(warn).toHaveBeenCalledWith("[messageQueue task]", expect.any(Error));
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("records sent topic message ids for deletion probes", async () => {
     fake = fakeApi();
     const setTopicProbeMessageId = vi.fn();
