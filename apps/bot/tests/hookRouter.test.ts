@@ -69,6 +69,73 @@ describe("HookRouter SessionStart", () => {
     const { router } = setup();
     await router.dispatch(envelope("InstructionsLoaded" as never));
   });
+
+  test("source=resume seeds last_byte_offset to current transcript EOF (skips history)", async () => {
+    // Simulate `claude --resume <id>`: the transcript file already has the
+    // entire prior conversation; SessionStart should NOT cause those entries
+    // to be re-emitted to Telegram on the next drain.
+    const { registry, router, dispatched } = setup();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "old answer 1" }] } },
+      { type: "user", message: { content: "old prompt" } },
+      { type: "assistant", message: { content: [{ type: "text", text: "old answer 2" }] } }
+    ]);
+    const { statSync } = await import("node:fs");
+    const preResumeSize = statSync(path).size;
+
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "S", transcript_path: path, cwd: "/a", source: "resume" },
+        { window_id: "@0" }
+      )
+    );
+
+    // Offset is parked at the pre-resume EOF so historical entries are skipped.
+    expect(registry.getSession("S")?.last_byte_offset).toBe(preResumeSize);
+
+    // Append the NEW post-resume entry and fire Stop — only the new one drains.
+    const { appendToTranscript } = await import("./helpers/transcriptFixtures.js");
+    await appendToTranscript(path, [
+      { type: "assistant", message: { content: [{ type: "text", text: "fresh post-resume answer" }] } }
+    ]);
+    await router.dispatch(
+      envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(dispatched).toContainEqual({ windowId: "@0", count: 1 });
+  });
+
+  test("source=startup keeps last_byte_offset at 0 (no behavior change for fresh sessions)", async () => {
+    const { registry, router } = setup();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "first answer" }] } }
+    ]);
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "S", transcript_path: path, cwd: "/a", source: "startup" },
+        { window_id: "@0" }
+      )
+    );
+    expect(registry.getSession("S")?.last_byte_offset).toBe(0);
+  });
+
+  test("source=resume with non-existent transcript_path falls back to offset 0", async () => {
+    const { registry, router } = setup();
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        {
+          session_id: "S",
+          transcript_path: "/nonexistent/path/transcript.jsonl",
+          cwd: "/a",
+          source: "resume"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(registry.getSession("S")?.last_byte_offset).toBe(0);
+  });
 });
 
 describe("HookRouter drain-triggering events", () => {

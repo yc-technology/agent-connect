@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import type { SessionRegistry } from "./sessionRegistry.js";
 import type { Dispatcher } from "./drainTranscript.js";
 import { drainTranscript } from "./drainTranscript.js";
@@ -117,12 +118,31 @@ export class HookRouter {
     const { registry } = this.deps;
     const { payload } = envelope;
     registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
+
+    // `source=resume` reuses an existing transcript file that already contains
+    // the entire prior conversation. If we leave last_byte_offset=0, the next
+    // drain re-emits every historical entry to Telegram. Stat the file and
+    // skip to current EOF so only post-resume entries get delivered.
+    // (`startup`/`clear`/`compact` either create a fresh file or rewrite it
+    // smaller — drainTranscript already handles size-shrink — so they keep
+    // the default offset=0.)
+    let lastByteOffset = 0;
+    if (payload.source === "resume" && payload.transcript_path) {
+      try {
+        const s = await stat(payload.transcript_path);
+        lastByteOffset = s.size;
+      } catch {
+        // File doesn't exist yet — fall through with offset 0.
+      }
+    }
+
     const args = {
       sessionId: payload.session_id,
       windowId: envelope.window_id,
       agentType: this.deps.agentType,
       transcriptPath: payload.transcript_path ?? "",
-      cwd: payload.cwd
+      cwd: payload.cwd,
+      lastByteOffset
     } as const;
     if (typeof payload.source === "string") {
       registry.registerSession({ ...args, source: payload.source });
