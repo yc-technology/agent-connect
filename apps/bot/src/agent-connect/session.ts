@@ -66,6 +66,10 @@ export interface HistoryMessage {
 
 export interface SessionRegistryLike {
   getSessionByWindow(windowId: string): { session_id: string } | null;
+  upsertWindow(windowId: string, displayName: string, cwd: string): void;
+  bindThread(userId: number, threadId: number, windowId: string): void;
+  unbindThread(userId: number, threadId: number): string | null;
+  setGroupChatId(userId: number, threadId: number, chatId: number): void;
 }
 
 export interface SessionManagerOptions {
@@ -354,6 +358,10 @@ export class SessionManager {
     const key = `${userId}:${threadId}`;
     if (this.groupChatIds[key] !== chatId) {
       this.groupChatIds[key] = chatId;
+      // Mirror to SessionRegistry. Only takes effect if the thread_bindings row
+      // already exists (Registry.setGroupChatId is an UPDATE, not INSERT) —
+      // bindThread above guarantees that ordering in the normal flow.
+      this.options.registry?.setGroupChatId(userId, threadId, chatId);
       this.saveState();
     }
   }
@@ -572,6 +580,17 @@ export class SessionManager {
     this.threadBindings[userId] ??= {};
     this.threadBindings[userId][threadId] = windowId;
     if (windowName) this.windowDisplayNames[windowId] = windowName;
+    // Mirror to SessionRegistry so its thread_bindings table stays in sync.
+    // Window row may not exist yet if binding races SessionStart hook; upsert
+    // with whatever metadata we have. The hook handler updates it later via
+    // ON CONFLICT DO UPDATE with the authoritative cwd.
+    const registry = this.options.registry;
+    if (registry) {
+      const display = windowName || this.windowDisplayNames[windowId] || windowId;
+      const cwd = this.windowStates[windowId]?.cwd ?? "";
+      registry.upsertWindow(windowId, display, cwd);
+      registry.bindThread(userId, threadId, windowId);
+    }
     this.saveState();
   }
 
@@ -582,6 +601,7 @@ export class SessionManager {
     delete bindings[threadId];
     if (Object.keys(bindings).length === 0) delete this.threadBindings[userId];
     delete this.topicProbeMessageIds[topicKey(userId, threadId)];
+    this.options.registry?.unbindThread(userId, threadId);
     this.saveState();
     return windowId;
   }

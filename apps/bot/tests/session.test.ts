@@ -411,3 +411,95 @@ describe("SessionManager Codex session resolution", () => {
     }
   });
 });
+
+describe("SessionManager registry dual-write", () => {
+  function fakeRegistry() {
+    const upserts: Array<[string, string, string]> = [];
+    const binds: Array<[number, number, string]> = [];
+    const unbinds: Array<[number, number]> = [];
+    const groupChats: Array<[number, number, number]> = [];
+    return {
+      calls: { upserts, binds, unbinds, groupChats },
+      getSessionByWindow: () => null,
+      upsertWindow: (windowId: string, displayName: string, cwd: string) => {
+        upserts.push([windowId, displayName, cwd]);
+      },
+      bindThread: (userId: number, threadId: number, windowId: string) => {
+        binds.push([userId, threadId, windowId]);
+      },
+      unbindThread: (userId: number, threadId: number) => {
+        unbinds.push([userId, threadId]);
+        return null;
+      },
+      setGroupChatId: (userId: number, threadId: number, chatId: number) => {
+        groupChats.push([userId, threadId, chatId]);
+      }
+    };
+  }
+
+  function makeManagerWithRegistry(dir: string, registry?: ReturnType<typeof fakeRegistry>): SessionManager {
+    return new SessionManager({
+      config: {
+        stateFile: join(dir, "state.json"),
+        sessionMapFile: join(dir, "session_map.json"),
+        tmuxSessionName: "x",
+        claudeProjectsPath: join(dir, "projects"),
+        codexHomePath: join(dir, "codex"),
+        agentType: "claude"
+      },
+      loadState: false,
+      ...(registry ? { registry } : {})
+    });
+  }
+
+  it("bindThread upserts window + writes binding to registry", () => {
+    const dir = tmpDir();
+    try {
+      const registry = fakeRegistry();
+      const mgr = makeManagerWithRegistry(dir, registry);
+      mgr.bindThread(100, 42, "@5", "creative-project");
+      expect(registry.calls.upserts).toEqual([["@5", "creative-project", ""]]);
+      expect(registry.calls.binds).toEqual([[100, 42, "@5"]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("unbindThread mirrors to registry", () => {
+    const dir = tmpDir();
+    try {
+      const registry = fakeRegistry();
+      const mgr = makeManagerWithRegistry(dir, registry);
+      mgr.bindThread(100, 42, "@5");
+      mgr.unbindThread(100, 42);
+      expect(registry.calls.unbinds).toEqual([[100, 42]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("setGroupChatId mirrors to registry", () => {
+    const dir = tmpDir();
+    try {
+      const registry = fakeRegistry();
+      const mgr = makeManagerWithRegistry(dir, registry);
+      mgr.bindThread(100, 42, "@5");
+      mgr.setGroupChatId(100, 42, -100200);
+      expect(registry.calls.groupChats).toEqual([[100, 42, -100200]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("no-ops cleanly when registry is not provided", () => {
+    const dir = tmpDir();
+    try {
+      const mgr = makeManagerWithRegistry(dir);
+      expect(() => mgr.bindThread(100, 42, "@5")).not.toThrow();
+      expect(() => mgr.unbindThread(100, 42)).not.toThrow();
+      expect(() => mgr.setGroupChatId(100, 42, -1)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
