@@ -12,7 +12,7 @@ Agent Connect 通过 Telegram 远程控制本地 tmux 里的 Claude Code 或 Cod
 - 支持 Claude Code 和 Codex，启动时自动同步 hooks。
 - 默认只发送 `Thinking...` 临时状态和最终回答，可在设置中开启中间 tool/status 消息。
 - 支持目录浏览、恢复会话、历史记录、截图和 slash command 转发。
-- 使用 workspace 内的 `@agent-connect/telegramify-markdown` 转换 Telegram HTML。
+- 使用 workspace 内的 `@yc-tech/telegramify-markdown` 转换 Telegram HTML。
 
 ## 要求
 
@@ -60,7 +60,7 @@ npm 发布后可以直接安装 CLI：
 
 ```bash
 pnpm -r publish
-npm install -g @agent-connect/cli
+npm install -g @yc-tech/agent-connect-cli
 ```
 
 ## Telegram 设置
@@ -115,7 +115,7 @@ agc hook
 apps/bot/                       TypeScript bot runtime 和 Fastify API
 apps/web/                       React + Vite + Zustand 管理页面
 packages/cli/                   `agc` 命令行入口
-packages/telegramify-markdown/  `@agent-connect/telegramify-markdown` 格式化包
+packages/telegramify-markdown/  `@yc-tech/telegramify-markdown` 格式化包
 doc/                            项目说明
 scripts/                        本地运维脚本
 ```

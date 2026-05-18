@@ -8,12 +8,12 @@ importers:
 
   .:
     devDependencies:
-      '@agent-connect/cli':
-        specifier: workspace:*
-        version: link:packages/cli
       '@types/node':
         specifier: ^25.8.0
         version: 25.8.0
+      '@yc-tech/agent-connect-cli':
+        specifier: workspace:*
+        version: link:packages/cli
       tsx:
         specifier: ^4.22.0
         version: 4.22.0
@@ -26,7 +26,7 @@ importers:
 
   apps/bot:
     dependencies:
-      '@agent-connect/telegramify-markdown':
+      '@yc-tech/telegramify-markdown':
         specifier: workspace:*
         version: link:../../packages/telegramify-markdown
       better-sqlite3:
@@ -82,7 +82,7 @@ importers:
 
   packages/cli:
     dependencies:
-      '@agent-connect/bot':
+      '@yc-tech/agent-connect-bot':
         specifier: workspace:*
         version: link:../../apps/bot
 

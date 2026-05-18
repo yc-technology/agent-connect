@@ -1,5 +1,5 @@
 {
-  "name": "@agent-connect/bot",
+  "name": "@yc-tech/agent-connect-bot",
   "version": "0.1.0",
   "type": "module",
   "description": "Agent Connect Telegram bot, hook router, and management API (library + service)",
@@ -58,7 +58,7 @@
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:ts": "vitest run",
-    "prepack": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm build"
+    "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm build"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
@@ -66,7 +66,7 @@
     "fastify": "^5.8.5",
     "grammy": "^1.43.0",
     "sharp": "^0.34.5",
-    "@agent-connect/telegramify-markdown": "workspace:*",
+    "@yc-tech/telegramify-markdown": "workspace:*",
     "undici": "^8.3.0"
   },
   "devDependencies": {

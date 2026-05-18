@@ -6,17 +6,17 @@
   "packageManager": "pnpm@10.6.3",
   "description": "Agent Connect TypeScript monorepo",
   "scripts": {
-    "dev": "pnpm --filter @agent-connect/cli --filter @agent-connect/web --parallel --stream dev",
-    "dev:bot": "pnpm --filter @agent-connect/cli dev",
-    "dev:web": "pnpm --filter @agent-connect/web dev",
-    "start": "pnpm --filter @agent-connect/cli start",
-    "hook:install": "pnpm --filter @agent-connect/cli hook:install",
+    "dev": "pnpm --filter @yc-tech/agent-connect-cli --filter @yc-tech/agent-connect-web --parallel --stream dev",
+    "dev:bot": "pnpm --filter @yc-tech/agent-connect-cli dev",
+    "dev:web": "pnpm --filter @yc-tech/agent-connect-web dev",
+    "start": "pnpm --filter @yc-tech/agent-connect-cli start",
+    "hook:install": "pnpm --filter @yc-tech/agent-connect-cli hook:install",
     "build": "pnpm -r build",
-    "typecheck": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm -r typecheck",
-    "test:ts": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm -r test:ts"
+    "typecheck": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm -r typecheck",
+    "test:ts": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm -r test:ts"
   },
   "devDependencies": {
-    "@agent-connect/cli": "workspace:*",
+    "@yc-tech/agent-connect-cli": "workspace:*",
     "@types/node": "^25.8.0",
     "tsx": "^4.22.0",
     "typescript": "^6.0.3",

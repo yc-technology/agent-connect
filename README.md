@@ -14,7 +14,7 @@ to that same terminal session.
 - Claude Code and Codex support, including hook-based session tracking.
 - Telegram notifications for final answers by default, with optional intermediate tool/status messages.
 - Directory browser, session resume, history, screenshots, and slash command forwarding.
-- Markdown to Telegram HTML formatting through the workspace `@agent-connect/telegramify-markdown` package.
+- Markdown to Telegram HTML formatting through the workspace `@yc-tech/telegramify-markdown` package.
 
 ## Requirements
 
@@ -62,7 +62,7 @@ For npm distribution, publish the workspace packages and install the CLI package
 
 ```bash
 pnpm -r publish
-npm install -g @agent-connect/cli
+npm install -g @yc-tech/agent-connect-cli
 ```
 
 ## Telegram Setup
@@ -143,7 +143,7 @@ setting synchronized.
 apps/bot/                       TypeScript bot runtime and Fastify API
 apps/web/                       React + Vite + Zustand management console
 packages/cli/                   `agc` command line entrypoint
-packages/telegramify-markdown/  `@agent-connect/telegramify-markdown` formatting package
+packages/telegramify-markdown/  `@yc-tech/telegramify-markdown` formatting package
 doc/                            Project notes
 scripts/                        Local operations
 ```

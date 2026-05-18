@@ -1,4 +1,4 @@
-# @agent-connect/cli
+# @yc-tech/agent-connect-cli
 
 Command-line entrypoint for [Agent Connect](https://github.com/yc-technology/agent-connect) — control Claude Code or Codex sessions remotely from Telegram through tmux.
 
@@ -7,7 +7,7 @@ Each Telegram Forum topic maps to one tmux window and one agent session. Claude 
 ## Install
 
 ```bash
-npm install -g @agent-connect/cli
+npm install -g @yc-tech/agent-connect-cli
 ```
 
 Provides the `agc` binary.

@@ -1,5 +1,5 @@
 import { EXPANDABLE_QUOTE_END, EXPANDABLE_QUOTE_START } from "./transcriptParser.js";
-import { convert as convertTelegramMarkdown, type MessageEntity } from "@agent-connect/telegramify-markdown";
+import { convert as convertTelegramMarkdown, type MessageEntity } from "@yc-tech/telegramify-markdown";
 
 const EXPQUOTE_MAX_RENDERED = 3800;
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { fileURLToPath } from "node:url";
-import { runHookClient } from "@agent-connect/bot/hookClient";
-import { installAllHooks } from "@agent-connect/bot/hookInstaller";
-import { runBotService } from "@agent-connect/bot/service";
+import { runHookClient } from "@yc-tech/agent-connect-bot/hookClient";
+import { installAllHooks } from "@yc-tech/agent-connect-bot/hookInstaller";
+import { runBotService } from "@yc-tech/agent-connect-bot/service";
 
 const HELP_TEXT = `agc command line
 

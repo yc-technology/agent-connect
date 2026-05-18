@@ -1,18 +1,18 @@
-# @agent-connect/bot
+# @yc-tech/agent-connect-bot
 
 Telegram bot, Fastify management API, hook router, and SQLite-backed runtime state for [Agent Connect](https://github.com/yc-technology/agent-connect).
 
 This package ships both:
 
-- The full service (used internally by [`@agent-connect/cli`](https://www.npmjs.com/package/@agent-connect/cli) — most users want the CLI, not this package directly).
+- The full service (used internally by [`@yc-tech/agent-connect-cli`](https://www.npmjs.com/package/@yc-tech/agent-connect-cli) — most users want the CLI, not this package directly).
 - A small library surface for advanced embedding scenarios.
 
 ## Library exports
 
 ```ts
-import { runHookClient } from "@agent-connect/bot/hookClient";
-import { installHooks } from "@agent-connect/bot/hookInstaller";
-import { startService } from "@agent-connect/bot/service";
+import { runHookClient } from "@yc-tech/agent-connect-bot/hookClient";
+import { installAllHooks } from "@yc-tech/agent-connect-bot/hookInstaller";
+import { runBotService } from "@yc-tech/agent-connect-bot/service";
 ```
 
 | Export | Purpose |

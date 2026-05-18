@@ -1,5 +1,5 @@
 {
-  "name": "@agent-connect/cli",
+  "name": "@yc-tech/agent-connect-cli",
   "version": "0.1.0",
   "type": "module",
   "description": "Agent Connect command line — bridges Telegram Forum topics to Claude Code / Codex sessions in tmux",
@@ -35,14 +35,14 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm --filter @agent-connect/bot build && tsx src/index.ts start",
+    "dev": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm --filter @yc-tech/agent-connect-bot build && tsx src/index.ts start",
     "start": "node dist/src/index.js start",
     "hook:install": "pnpm build && node dist/src/index.js hook --install",
     "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepack": "pnpm --filter @agent-connect/telegramify-markdown build && pnpm --filter @agent-connect/bot build && pnpm build"
+    "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm --filter @yc-tech/agent-connect-bot build && pnpm build"
   },
   "dependencies": {
-    "@agent-connect/bot": "workspace:*"
+    "@yc-tech/agent-connect-bot": "workspace:*"
   }
 }

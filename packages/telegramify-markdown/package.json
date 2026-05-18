@@ -1,5 +1,5 @@
 {
-  "name": "@agent-connect/telegramify-markdown",
+  "name": "@yc-tech/telegramify-markdown",
   "version": "0.1.0",
   "type": "module",
   "description": "Convert Markdown to Telegram HTML / text / MessageEntity objects / MarkdownV2",

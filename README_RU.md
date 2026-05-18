@@ -14,7 +14,7 @@ Agent Connect управляет локальными сессиями Claude Co
 - Поддержка Claude Code и Codex с автоматической синхронизацией hooks.
 - По умолчанию отправляются временный статус `Thinking...` и финальный ответ; промежуточные tool/status сообщения включаются в настройках.
 - Браузер директорий, resume сессий, история, скриншоты и forwarding slash-команд.
-- Форматирование Telegram HTML через workspace-пакет `@agent-connect/telegramify-markdown`.
+- Форматирование Telegram HTML через workspace-пакет `@yc-tech/telegramify-markdown`.
 
 ## Требования
 
@@ -62,7 +62,7 @@ agc help
 
 ```bash
 pnpm -r publish
-npm install -g @agent-connect/cli
+npm install -g @yc-tech/agent-connect-cli
 ```
 
 ## Telegram Setup
@@ -118,7 +118,7 @@ installing hooks, for example
 apps/bot/                       TypeScript bot runtime and Fastify API
 apps/web/                       React + Vite + Zustand management console
 packages/cli/                   `agc` command line entrypoint
-packages/telegramify-markdown/  `@agent-connect/telegramify-markdown` formatting package
+packages/telegramify-markdown/  `@yc-tech/telegramify-markdown` formatting package
 doc/                            Project notes
 scripts/                        Local operations
 ```

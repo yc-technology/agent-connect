@@ -25,7 +25,7 @@ pnpm hook:install    # Synchronize Claude and Codex hooks
 - **1 Topic = 1 Window = 1 Session** — internal routing is keyed by tmux window ID (`@0`, `@12`), not window name. Window names are display names only.
 - **Topic-only** — no `/list`, no General topic routing, and no compatibility path for old non-topic modes.
 - **No parse-layer truncation** — full transcript content is preserved; splitting happens only at Telegram send time.
-- **HTML formatting** — Markdown is converted to Telegram HTML through the workspace `@agent-connect/telegramify-markdown` package, with plain-text fallback.
+- **HTML formatting** — Markdown is converted to Telegram HTML through the workspace `@yc-tech/telegramify-markdown` package, with plain-text fallback.
 - **Hook-driven runtime** — Claude and Codex hooks POST events to the bot's Fastify `/hook/events` endpoint; `HookRouter` serializes per-window events and `drainTranscript` reads `transcript_path` from the hook payload. No polling, no `session_map.json`.
 - **SQLite per bot** — `bots/<id>/bot.sqlite` holds `windows` / `sessions` / `thread_bindings` / `user_window_offsets`. Window kill cascades to dependent rows via FK.
 - **Message queue per user** — FIFO ordering, message merging, and tool_use/tool_result pairing live in the send queue.

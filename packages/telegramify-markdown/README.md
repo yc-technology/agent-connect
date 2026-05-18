@@ -1,4 +1,4 @@
-# @agent-connect/telegramify-markdown
+# @yc-tech/telegramify-markdown
 
 Convert Markdown into formats Telegram understands:
 
@@ -11,7 +11,7 @@ Built on `unified` + `remark-parse` + `remark-gfm` + `remark-math`. Used by [Age
 ## Install
 
 ```bash
-npm install @agent-connect/telegramify-markdown
+npm install @yc-tech/telegramify-markdown
 ```
 
 ## Usage
@@ -21,7 +21,7 @@ import telegramifyMarkdown, {
   convert,
   markdownify,
   telegramify
-} from "@agent-connect/telegramify-markdown";
+} from "@yc-tech/telegramify-markdown";
 
 // Plain text + MessageEntity[] (for sendMessage with `entities`)
 const [text, entities] = convert("**hi** `code`");
