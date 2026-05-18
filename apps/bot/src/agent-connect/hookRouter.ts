@@ -89,13 +89,38 @@ export class HookRouter {
   }
 
   private async onDrain(envelope: HookEnvelope): Promise<void> {
+    this.lazyRegisterIfMissing(envelope);
     const sessionId = envelope.payload.session_id;
     await drainTranscript(this.deps.registry, this.deps.dispatcher, sessionId);
   }
 
   private async onSessionEnd(envelope: HookEnvelope): Promise<void> {
+    this.lazyRegisterIfMissing(envelope);
     const sessionId = envelope.payload.session_id;
     await drainTranscript(this.deps.registry, this.deps.dispatcher, sessionId);
     this.deps.registry.endSession(sessionId);
+  }
+
+  /**
+   * When the bot is started after Claude/Codex are already running, or when
+   * a Telegram topic is bound to a pre-existing tmux window, we miss the
+   * SessionStart hook for that session. The first event we then see (Stop,
+   * PostToolUse, etc.) carries the session_id and transcript_path — use them
+   * to register the session lazily. Starts the read offset at 0 so the
+   * conversation that prompted this event still gets delivered.
+   */
+  private lazyRegisterIfMissing(envelope: HookEnvelope): void {
+    const { payload } = envelope;
+    if (!payload.session_id || !payload.transcript_path) return;
+    if (this.deps.registry.getSession(payload.session_id)) return;
+    this.deps.registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
+    this.deps.registry.registerSession({
+      sessionId: payload.session_id,
+      windowId: envelope.window_id,
+      agentType: this.deps.agentType,
+      transcriptPath: payload.transcript_path,
+      cwd: payload.cwd,
+      source: "lazy"
+    });
   }
 }

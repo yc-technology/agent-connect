@@ -210,6 +210,42 @@ describe("HookRouter foreign-agent filter", () => {
   });
 });
 
+describe("HookRouter lazy registration", () => {
+  test("Stop for unknown session lazily registers + drains transcript", async () => {
+    const { registry, router, dispatched } = setup();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "first reply" }] } }
+    ]);
+    // No SessionStart fired — simulate bot starting up after Claude already running,
+    // or user binding a topic to a pre-existing tmux window.
+    await router.dispatch(
+      envelope(
+        "Stop",
+        { session_id: "LATE", transcript_path: path, cwd: "/a" },
+        { window_id: "@0", window_name: "proj" }
+      )
+    );
+    expect(registry.getSession("LATE")).toMatchObject({ window_id: "@0", source: "lazy" });
+    expect(registry.listLiveWindows()).toMatchObject([{ window_id: "@0", display_name: "proj" }]);
+    expect(dispatched).toContainEqual({ windowId: "@0", count: 1 });
+  });
+
+  test("lazy register does not double-register on next event", async () => {
+    const { registry, router } = setup();
+    const path = await writeFakeTranscript([]);
+    await router.dispatch(
+      envelope("Stop", { session_id: "L1", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    const firstStarted = registry.getSession("L1")?.started_at;
+    expect(firstStarted).toBeTypeOf("number");
+    await new Promise((r) => setTimeout(r, 5));
+    await router.dispatch(
+      envelope("PostToolUse", { session_id: "L1", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(registry.getSession("L1")?.started_at).toBe(firstStarted);
+  });
+});
+
 describe("HookRouter per-window queue", () => {
   test("SessionStart completes before subsequent Stop even when dispatched out of order", async () => {
     const { registry, router } = setup();
