@@ -240,6 +240,9 @@ export class MessageQueueManager {
 
     if (lastMessageId && task.role === "assistant" && task.contentType === "text") {
       this.lastAssistantMessageIds.set(statusKey(userId, tid), lastMessageId);
+      console.warn(`[last-asst] recorded uid=${userId} tid=${tid} msg=${lastMessageId} parts=${parts.length}`);
+    } else if (lastMessageId) {
+      console.warn(`[last-asst] SKIPPED uid=${userId} tid=${tid} role=${task.role} ct=${task.contentType}`);
     }
 
     await this.sendTaskImages(chatId, task);

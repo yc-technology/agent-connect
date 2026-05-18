@@ -128,16 +128,18 @@ export class MultiBotRuntimeManager {
       };
       const onTurnEnd = async (windowId: string, outcome: "success" | "failure") => {
         const emoji = outcome === "success" ? "👌" : "🤔";
-        for (const [userId, _w, threadId] of sessionManager.findUsersForWindow(windowId)) {
+        const users = sessionManager.findUsersForWindow(windowId);
+        console.warn(`[turn-end] window=${windowId} outcome=${outcome} users=${users.length}`);
+        for (const [userId, _w, threadId] of users) {
           const messageId = messageQueue.getLastAssistantMessageId(userId, threadId);
-          if (!messageId) continue;
           const chatId = sessionManager.resolveChatId(userId, threadId);
+          console.warn(`[turn-end]   uid=${userId} tid=${threadId} chat=${chatId} msgId=${messageId}`);
+          if (!messageId) continue;
           try {
             await api.setMessageReaction?.(chatId, messageId, [{ type: "emoji", emoji }]);
-          } catch {
-            // Best-effort. Reactions may be disabled in the group, the bot may
-            // lack permission, or the message may have been deleted — none of
-            // those are fatal for delivery.
+            console.warn(`[turn-end]   ✓ reaction sent (msg ${messageId})`);
+          } catch (err) {
+            console.warn(`[turn-end]   ✗ reaction failed:`, err instanceof Error ? err.message : err);
           }
         }
       };
