@@ -64,6 +64,16 @@ const UI_PATTERNS: UIPattern[] = [
     bottom: [/Esc to cancel/, /Esc to exit/, /Enter to confirm/, /^\s*Type to filter/],
     minGap: 2
   },
+  {
+    // Claude `/resume` session picker. Distinctive header `Resume session (N of M)`
+    // and a footer mentioning the Ctrl+A / Ctrl+B / Type to search controls.
+    // The default Up/Down/Enter/Esc keyboard is enough to navigate; Ctrl+* shortcuts
+    // are not reachable from Telegram (acceptable v1).
+    name: "ResumeSession",
+    top: [/^\s*Resume session\s*\(\d+\s+of\s+\d+\)/],
+    bottom: [/Type to search\s*·\s*Esc to cancel/],
+    minGap: 2
+  },
   // ─── Codex TUI prompts ───
   // Codex shapes its interactive prompts differently from Claude:
   //   - AskUserQuestion uses a "Question N/M" header + "›" cursor + numbered

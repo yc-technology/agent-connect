@@ -135,6 +135,43 @@ describe("interactive UI extraction", () => {
     expect(result?.content).toContain("Press enter to confirm");
   });
 
+  it("extracts Claude /resume session picker", () => {
+    // Real capture from `claude --resume` (slash command form): a "Resume session
+    // (N of M)" header, a search box, project label, several session rows with
+    // `❯` cursor + metadata, and a long footer ending in `... Type to search ·
+    // Esc to cancel`. The footer wraps on narrow panes — both top and bottom
+    // markers above need to survive that wrap.
+    const pane =
+      "❯ /resume\n" +
+      "\n" +
+      "───────────────────────────────────────\n" +
+      "  Resume session (1 of 9)\n" +
+      "  ╭─────────────────────────────────────╮\n" +
+      "  │ ⌕ Search…                           │\n" +
+      "  ╰─────────────────────────────────────╯\n" +
+      "    creative-project\n" +
+      "\n" +
+      "  ❯ Document Tauri reference from Chrome extension\n" +
+      "    30 seconds ago · HEAD · 10.5MB\n" +
+      "\n" +
+      "    Reduce width of left sidebar layout\n" +
+      "    1 day ago · HEAD · 102.4KB\n" +
+      "\n" +
+      "  ↓ /clear\n" +
+      "    1 day ago · HEAD · 18.1KB\n" +
+      "\n" +
+      "    Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to\n" +
+      "    rename · Type to search · Esc to cancel\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("ResumeSession");
+    expect(result?.content).toContain("Resume session (1 of 9)");
+    expect(result?.content).toContain("❯ Document Tauri reference");
+    expect(result?.content).toContain("Type to search · Esc to cancel");
+    // Should NOT bleed the `❯ /resume` input line before the picker into the
+    // extraction.
+    expect(result?.content).not.toContain("❯ /resume");
+  });
+
   it("extracts Codex AskUserQuestion (numbered options + tab/enter/esc footer)", () => {
     // Real Codex 0.130 pane capture during an AskUserQuestion prompt.
     const pane =
