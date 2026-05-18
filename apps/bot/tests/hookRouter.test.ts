@@ -466,13 +466,20 @@ describe("HookRouter onTurnEnd", () => {
 });
 
 describe("HookRouter lazy registration", () => {
-  test("Stop for unknown session lazily registers + drains transcript", async () => {
+  test("lazy register on unknown session skips pre-existing transcript (no history dump)", async () => {
+    // Scenario: user binds a Telegram topic to a tmux window that ALREADY has a
+    // long-running Claude session. The transcript file is full of old entries.
+    // The bot's first hook for this session arrives (Stop / PostToolUse). We
+    // must NOT re-emit that history to Telegram.
     const { registry, router, dispatched } = setup();
     const path = await writeFakeTranscript([
-      { type: "assistant", message: { content: [{ type: "text", text: "first reply" }] } }
+      { type: "assistant", message: { content: [{ type: "text", text: "ancient reply 1" }] } },
+      { type: "user", message: { content: "ancient prompt" } },
+      { type: "assistant", message: { content: [{ type: "text", text: "ancient reply 2" }] } }
     ]);
-    // No SessionStart fired — simulate bot starting up after Claude already running,
-    // or user binding a topic to a pre-existing tmux window.
+    const { statSync } = await import("node:fs");
+    const preBindSize = statSync(path).size;
+
     await router.dispatch(
       envelope(
         "Stop",
@@ -480,9 +487,40 @@ describe("HookRouter lazy registration", () => {
         { window_id: "@0", window_name: "proj" }
       )
     );
-    expect(registry.getSession("LATE")).toMatchObject({ window_id: "@0", source: "lazy" });
+
+    // Session is registered, window known, but offset is parked at EOF so the
+    // historical entries are NOT delivered. The triggering Stop's transcript
+    // contents are by design also skipped — the user can send a fresh prompt
+    // to bootstrap, which is strictly better than dumping hours of history.
+    expect(registry.getSession("LATE")).toMatchObject({
+      window_id: "@0",
+      source: "lazy",
+      last_byte_offset: preBindSize
+    });
     expect(registry.listLiveWindows()).toMatchObject([{ window_id: "@0", display_name: "proj" }]);
-    expect(dispatched).toContainEqual({ windowId: "@0", count: 1 });
+    expect(dispatched).toEqual([]);
+
+    // Append a NEW post-bind entry and fire another event — only that one drains.
+    const { appendToTranscript } = await import("./helpers/transcriptFixtures.js");
+    await appendToTranscript(path, [
+      { type: "assistant", message: { content: [{ type: "text", text: "post-bind answer" }] } }
+    ]);
+    await router.dispatch(
+      envelope("Stop", { session_id: "LATE", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(dispatched).toEqual([{ windowId: "@0", count: 1 }]);
+  });
+
+  test("lazy register on unknown session with empty transcript still works (offset 0)", async () => {
+    // Edge case: transcript file exists but is empty (e.g. session_just started
+    // but SessionStart hook was dropped). Offset 0 == file size, no-op semantically.
+    const { registry, router, dispatched } = setup();
+    const path = await writeFakeTranscript([]);
+    await router.dispatch(
+      envelope("Stop", { session_id: "EMPTY", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(registry.getSession("EMPTY")?.last_byte_offset).toBe(0);
+    expect(dispatched).toEqual([]);
   });
 
   test("lazy register does not double-register on next event", async () => {

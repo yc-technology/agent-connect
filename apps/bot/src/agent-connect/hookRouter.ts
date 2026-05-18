@@ -152,13 +152,13 @@ export class HookRouter {
   }
 
   private async onDrain(envelope: HookEnvelope): Promise<void> {
-    this.lazyRegisterIfMissing(envelope);
+    await this.lazyRegisterIfMissing(envelope);
     const sessionId = envelope.payload.session_id;
     await drainTranscript(this.deps.registry, this.deps.dispatcher, sessionId);
   }
 
   private async onSessionEnd(envelope: HookEnvelope): Promise<void> {
-    this.lazyRegisterIfMissing(envelope);
+    await this.lazyRegisterIfMissing(envelope);
     const sessionId = envelope.payload.session_id;
     await drainTranscript(this.deps.registry, this.deps.dispatcher, sessionId);
     this.deps.registry.endSession(sessionId);
@@ -169,21 +169,38 @@ export class HookRouter {
    * a Telegram topic is bound to a pre-existing tmux window, we miss the
    * SessionStart hook for that session. The first event we then see (Stop,
    * PostToolUse, etc.) carries the session_id and transcript_path — use them
-   * to register the session lazily. Starts the read offset at 0 so the
-   * conversation that prompted this event still gets delivered.
+   * to register the session lazily.
+   *
+   * Seed `last_byte_offset` to the current file size (NOT 0) so the historical
+   * conversation already in the transcript does NOT get re-emitted to Telegram.
+   * Trade-off: the specific turn whose hook triggered this registration is also
+   * skipped, but that is strictly better than dumping hours of history; the
+   * user can send a new prompt to bootstrap. Bot restarts that find existing
+   * SQLite rows go through the startup catch-up path instead and resume from
+   * the persisted offset — they are unaffected by this branch.
    */
-  private lazyRegisterIfMissing(envelope: HookEnvelope): void {
+  private async lazyRegisterIfMissing(envelope: HookEnvelope): Promise<void> {
     const { payload } = envelope;
     if (!payload.session_id || !payload.transcript_path) return;
     if (this.deps.registry.getSession(payload.session_id)) return;
     this.deps.registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
+
+    let lastByteOffset = 0;
+    try {
+      const s = await stat(payload.transcript_path);
+      lastByteOffset = s.size;
+    } catch {
+      // File doesn't exist yet — fall through with offset 0.
+    }
+
     this.deps.registry.registerSession({
       sessionId: payload.session_id,
       windowId: envelope.window_id,
       agentType: this.deps.agentType,
       transcriptPath: payload.transcript_path,
       cwd: payload.cwd,
-      source: "lazy"
+      source: "lazy",
+      lastByteOffset
     });
   }
 }
