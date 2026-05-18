@@ -17,6 +17,35 @@ export interface HookRouterDeps {
   onStatusEvent?: OnStatusEvent;
 }
 
+/**
+ * Seed `last_byte_offset` for a new session row whose transcript file may
+ * already contain history we do NOT want to re-emit to Telegram.
+ *
+ * Two callers share this:
+ *   - SessionStart with source="resume" (`claude --resume <id>`) — file holds
+ *     the entire prior conversation, drain from 0 would dump all of it.
+ *   - lazyRegisterIfMissing — bot started after Claude was already running, or
+ *     a Telegram topic was bound to a pre-existing tmux window.
+ *
+ * Returns the file's current EOF position so the next drain reads zero bytes
+ * for the triggering event. Falls back to 0 when the file does not exist yet
+ * (fresh session whose transcript_path is registered before first write).
+ *
+ * Trade-off: the specific turn whose hook triggered the registration is also
+ * skipped, because at hook-fire time the file already contains its
+ * contribution. The user can send a fresh prompt to bootstrap — strictly
+ * better than re-emitting an arbitrarily long history.
+ */
+async function offsetSkippingHistory(transcriptPath: string | null | undefined): Promise<number> {
+  if (!transcriptPath) return 0;
+  try {
+    const s = await stat(transcriptPath);
+    return s.size;
+  } catch {
+    return 0;
+  }
+}
+
 export class HookRouter {
   private readonly windowQueues = new Map<string, Promise<unknown>>();
 
@@ -119,22 +148,11 @@ export class HookRouter {
     const { payload } = envelope;
     registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
 
-    // `source=resume` reuses an existing transcript file that already contains
-    // the entire prior conversation. If we leave last_byte_offset=0, the next
-    // drain re-emits every historical entry to Telegram. Stat the file and
-    // skip to current EOF so only post-resume entries get delivered.
-    // (`startup`/`clear`/`compact` either create a fresh file or rewrite it
-    // smaller — drainTranscript already handles size-shrink — so they keep
-    // the default offset=0.)
-    let lastByteOffset = 0;
-    if (payload.source === "resume" && payload.transcript_path) {
-      try {
-        const s = await stat(payload.transcript_path);
-        lastByteOffset = s.size;
-      } catch {
-        // File doesn't exist yet — fall through with offset 0.
-      }
-    }
+    // `startup`/`clear`/`compact` either start from a fresh transcript or
+    // rewrite it smaller (drainTranscript handles the size-shrink), so they
+    // keep offset 0. Only `resume` needs to skip pre-existing history.
+    const lastByteOffset =
+      payload.source === "resume" ? await offsetSkippingHistory(payload.transcript_path) : 0;
 
     const args = {
       sessionId: payload.session_id,
@@ -165,34 +183,18 @@ export class HookRouter {
   }
 
   /**
-   * When the bot is started after Claude/Codex are already running, or when
-   * a Telegram topic is bound to a pre-existing tmux window, we miss the
-   * SessionStart hook for that session. The first event we then see (Stop,
-   * PostToolUse, etc.) carries the session_id and transcript_path — use them
-   * to register the session lazily.
-   *
-   * Seed `last_byte_offset` to the current file size (NOT 0) so the historical
-   * conversation already in the transcript does NOT get re-emitted to Telegram.
-   * Trade-off: the specific turn whose hook triggered this registration is also
-   * skipped, but that is strictly better than dumping hours of history; the
-   * user can send a new prompt to bootstrap. Bot restarts that find existing
-   * SQLite rows go through the startup catch-up path instead and resume from
-   * the persisted offset — they are unaffected by this branch.
+   * Bot started after Claude/Codex was already running, or a Telegram topic
+   * was bound to a pre-existing tmux window — so we missed SessionStart.
+   * Register the session from whatever hook arrived first; `offsetSkippingHistory`
+   * keeps the historical transcript out of Telegram. Bot restarts that find
+   * an existing SQLite row go through the startup catch-up path with the
+   * persisted offset and never reach this branch.
    */
   private async lazyRegisterIfMissing(envelope: HookEnvelope): Promise<void> {
     const { payload } = envelope;
     if (!payload.session_id || !payload.transcript_path) return;
     if (this.deps.registry.getSession(payload.session_id)) return;
     this.deps.registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
-
-    let lastByteOffset = 0;
-    try {
-      const s = await stat(payload.transcript_path);
-      lastByteOffset = s.size;
-    } catch {
-      // File doesn't exist yet — fall through with offset 0.
-    }
-
     this.deps.registry.registerSession({
       sessionId: payload.session_id,
       windowId: envelope.window_id,
@@ -200,7 +202,7 @@ export class HookRouter {
       transcriptPath: payload.transcript_path,
       cwd: payload.cwd,
       source: "lazy",
-      lastByteOffset
+      lastByteOffset: await offsetSkippingHistory(payload.transcript_path)
     });
   }
 }
