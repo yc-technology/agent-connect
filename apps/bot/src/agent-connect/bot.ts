@@ -155,7 +155,10 @@ export interface PhotoHandlerOptions {
 
 export interface BotHandlerOptions {
   api?: TelegramApiLike;
-  messageQueue?: Pick<MessageQueueManager, "clearStatusMsgInfo" | "clearToolMsgIdsForTopic">;
+  messageQueue?: Pick<
+    MessageQueueManager,
+    "clearStatusMsgInfo" | "clearToolMsgIdsForTopic" | "clearLastAssistantMessageId"
+  >;
   bashCapture?: Pick<BashCaptureManager, "start" | "cancel" | "cancelAll">;
   stateStore?: BotStateStore;
 }
@@ -728,6 +731,7 @@ export async function clearTopicState(
 ): Promise<void> {
   deps.messageQueue?.clearStatusMsgInfo(userId, threadId);
   deps.messageQueue?.clearToolMsgIdsForTopic(userId, threadId);
+  deps.messageQueue?.clearLastAssistantMessageId(userId, threadId);
   await clearInteractiveMessage(deps.api && deps.routing ? { api: deps.api, routing: deps.routing } : null, userId, threadId);
 
   const userData = deps.stateStore?.userData(userId);

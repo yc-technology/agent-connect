@@ -24,7 +24,12 @@ export interface StatusPollingDeps extends InteractiveUiDeps {
   tmuxManager: Pick<TmuxManager, "findWindowById" | "capturePane" | "killWindow">;
   messageQueue: Pick<
     MessageQueueManager,
-    "enqueueStatusUpdate" | "drain" | "getQueue" | "clearStatusMsgInfo" | "clearToolMsgIdsForTopic"
+    | "enqueueStatusUpdate"
+    | "drain"
+    | "getQueue"
+    | "clearStatusMsgInfo"
+    | "clearToolMsgIdsForTopic"
+    | "clearLastAssistantMessageId"
   >;
 }
 
@@ -209,6 +214,7 @@ async function cleanupTopicBinding(
   deps.registry?.deleteWindow(windowId);
   deps.messageQueue.clearStatusMsgInfo(userId, threadId);
   deps.messageQueue.clearToolMsgIdsForTopic(userId, threadId);
+  deps.messageQueue.clearLastAssistantMessageId(userId, threadId);
   await clearInteractiveMessage(deps, userId, threadId);
 }
 

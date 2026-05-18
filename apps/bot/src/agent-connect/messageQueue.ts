@@ -37,6 +37,11 @@ export class MessageQueueManager {
   private readonly processing = new Set<number>();
   private readonly toolMessageIds = new Map<ToolKey, number>();
   private readonly statusMessageInfo = new Map<StatusKey, { messageId: number; windowId: string; text: string }>();
+  // Tracks the id of the most recent assistant TEXT message sent per (user, thread).
+  // HookRouter's onTurnEnd reads this to attach a "turn done" reaction. We only
+  // record text-role assistant sends — never tool_use / tool_result / thinking —
+  // so the reaction always lands on the final spoken reply for that topic.
+  private readonly lastAssistantMessageIds = new Map<StatusKey, number>();
 
   constructor(
     private readonly api: TelegramApiLike,
@@ -145,6 +150,14 @@ export class MessageQueueManager {
     return this.statusMessageInfo.get(statusKey(userId, threadId ?? 0)) ?? null;
   }
 
+  getLastAssistantMessageId(userId: number, threadId: number | null = null): number | null {
+    return this.lastAssistantMessageIds.get(statusKey(userId, threadId ?? 0)) ?? null;
+  }
+
+  clearLastAssistantMessageId(userId: number, threadId: number | null = null): void {
+    this.lastAssistantMessageIds.delete(statusKey(userId, threadId ?? 0));
+  }
+
   private enqueue(userId: number, task: MessageTask): void {
     const queue = this.queues.get(userId) ?? [];
     queue.push(task);
@@ -223,6 +236,10 @@ export class MessageQueueManager {
 
     if (lastMessageId && task.toolUseId && task.contentType === "tool_use") {
       this.toolMessageIds.set(toolKey(task.toolUseId, userId, tid), lastMessageId);
+    }
+
+    if (lastMessageId && task.role === "assistant" && task.contentType === "text") {
+      this.lastAssistantMessageIds.set(statusKey(userId, tid), lastMessageId);
     }
 
     await this.sendTaskImages(chatId, task);

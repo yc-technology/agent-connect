@@ -176,7 +176,8 @@ describe("bot session commands", () => {
     const unbindThread = vi.fn(() => "@5");
     const messageQueue = {
       clearStatusMsgInfo: vi.fn(),
-      clearToolMsgIdsForTopic: vi.fn()
+      clearToolMsgIdsForTopic: vi.fn(),
+      clearLastAssistantMessageId: vi.fn()
     };
 
     await unbindCommand(
@@ -210,7 +211,8 @@ describe("bot session commands", () => {
     const deleteForumTopic = vi.fn(async () => true as const);
     const messageQueue = {
       clearStatusMsgInfo: vi.fn(),
-      clearToolMsgIdsForTopic: vi.fn()
+      clearToolMsgIdsForTopic: vi.fn(),
+      clearLastAssistantMessageId: vi.fn()
     };
 
     await killCommand(
@@ -577,7 +579,8 @@ describe("bot topic events", () => {
     const killWindow = vi.fn(async () => true);
     const messageQueue = {
       clearStatusMsgInfo: vi.fn(),
-      clearToolMsgIdsForTopic: vi.fn()
+      clearToolMsgIdsForTopic: vi.fn(),
+      clearLastAssistantMessageId: vi.fn()
     };
     const store = new BotStateStore();
     Object.assign(store.userData(12345), {

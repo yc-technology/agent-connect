@@ -1,4 +1,4 @@
-import { describe, test, expect } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { SessionRegistry } from "../src/agent-connect/sessionRegistry.js";
 import { HookRouter } from "../src/agent-connect/hookRouter.js";
 import { inMemoryDb } from "./helpers/registryFixtures.js";
@@ -207,6 +207,76 @@ describe("HookRouter foreign-agent filter", () => {
     );
     expect(dispatched.length).toBe(before);
     expect(registry.getSessionByWindow("@0")?.session_id).toBe("C1");
+  });
+});
+
+describe("HookRouter onTurnEnd", () => {
+  function setupWithTurn() {
+    const registry = new SessionRegistry(inMemoryDb());
+    const dispatched: Array<{ windowId: string; count: number }> = [];
+    const dispatcher: Dispatcher = async (windowId, entries) => {
+      dispatched.push({ windowId, count: entries.length });
+    };
+    const turnEnds: Array<{ windowId: string; outcome: string }> = [];
+    const onTurnEnd = async (windowId: string, outcome: string) => {
+      turnEnds.push({ windowId, outcome });
+    };
+    const router = new HookRouter({ registry, dispatcher, agentType: "claude", onTurnEnd });
+    return { registry, router, dispatched, turnEnds };
+  }
+
+  test("Stop fires onTurnEnd with success outcome AFTER drain completes", async () => {
+    const { router, dispatched, turnEnds } = setupWithTurn();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "hi" }] } }
+    ]);
+    await router.dispatch(
+      envelope("SessionStart", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(turnEnds).toEqual([]);
+    await router.dispatch(
+      envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" })
+    );
+    expect(dispatched).toContainEqual({ windowId: "@0", count: 1 });
+    expect(turnEnds).toEqual([{ windowId: "@0", outcome: "success" }]);
+  });
+
+  test("PostToolUse / UserPromptSubmit / SessionStart never fire onTurnEnd", async () => {
+    const { router, turnEnds } = setupWithTurn();
+    const path = await writeFakeTranscript([]);
+    await router.dispatch(envelope("SessionStart", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+    await router.dispatch(envelope("PostToolUse", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+    await router.dispatch(envelope("UserPromptSubmit", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+    expect(turnEnds).toEqual([]);
+  });
+
+  test("onTurnEnd throw is swallowed and does not break further dispatch", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const dispatched: Array<{ windowId: string; count: number }> = [];
+    const onTurnEnd = async () => {
+      throw new Error("reaction api down");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const router = new HookRouter({
+        registry,
+        dispatcher: async (w, e) => {
+          dispatched.push({ windowId: w, count: e.length });
+        },
+        agentType: "claude",
+        onTurnEnd
+      });
+      const path = await writeFakeTranscript([
+        { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } }
+      ]);
+      await router.dispatch(envelope("SessionStart", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+      await router.dispatch(envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+      // dispatch is still reachable for next event
+      await router.dispatch(envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
+      expect(warn).toHaveBeenCalledWith("[hookRouter onTurnEnd]", expect.any(Error));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

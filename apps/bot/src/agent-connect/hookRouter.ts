@@ -3,10 +3,14 @@ import type { Dispatcher } from "./drainTranscript.js";
 import { drainTranscript } from "./drainTranscript.js";
 import type { AgentType, HookEnvelope, HookEventName } from "./hookTypes.js";
 
+export type TurnEndOutcome = "success" | "failure";
+export type OnTurnEnd = (windowId: string, outcome: TurnEndOutcome) => Promise<void>;
+
 export interface HookRouterDeps {
   registry: SessionRegistry;
   dispatcher: Dispatcher;
   agentType: AgentType;
+  onTurnEnd?: OnTurnEnd;
 }
 
 export class HookRouter {
@@ -38,8 +42,12 @@ export class HookRouter {
       case "UserPromptSubmit":
       case "PostToolUse":
       case "PostToolBatch":
-      case "PostToolUseFailure":
+        return this.onDrain(envelope);
       case "Stop":
+        await this.onDrain(envelope);
+        await this.fireTurnEnd(envelope, "success");
+        return;
+      case "PostToolUseFailure":
         return this.onDrain(envelope);
       case "PreToolUse":
       case "Notification":
@@ -48,6 +56,15 @@ export class HookRouter {
         return;
       default:
         return;
+    }
+  }
+
+  private async fireTurnEnd(envelope: HookEnvelope, outcome: TurnEndOutcome): Promise<void> {
+    if (!this.deps.onTurnEnd) return;
+    try {
+      await this.deps.onTurnEnd(envelope.window_id, outcome);
+    } catch (err) {
+      console.warn("[hookRouter onTurnEnd]", err);
     }
   }
 

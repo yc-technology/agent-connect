@@ -126,7 +126,27 @@ export class MultiBotRuntimeManager {
           await handleNewMessage(msg, { config, sessionManager, messageQueue });
         }
       };
-      const hookRouter = new HookRouter({ registry, dispatcher, agentType: config.agentType });
+      const onTurnEnd = async (windowId: string, outcome: "success" | "failure") => {
+        const emoji = outcome === "success" ? "👌" : "🤔";
+        for (const [userId, _w, threadId] of sessionManager.findUsersForWindow(windowId)) {
+          const messageId = messageQueue.getLastAssistantMessageId(userId, threadId);
+          if (!messageId) continue;
+          const chatId = sessionManager.resolveChatId(userId, threadId);
+          try {
+            await api.setMessageReaction?.(chatId, messageId, [{ type: "emoji", emoji }]);
+          } catch {
+            // Best-effort. Reactions may be disabled in the group, the bot may
+            // lack permission, or the message may have been deleted — none of
+            // those are fatal for delivery.
+          }
+        }
+      };
+      const hookRouter = new HookRouter({
+        registry,
+        dispatcher,
+        onTurnEnd,
+        agentType: config.agentType
+      });
       hookRouterRegistry.set(config.tmuxSessionName, hookRouter);
 
       // Startup catch-up: deliver any assistant text written while the bot was offline.

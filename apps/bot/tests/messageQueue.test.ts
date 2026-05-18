@@ -199,3 +199,60 @@ describe("message queue tool handling", () => {
     expect(manager.getToolMessageId("t1", 100, 42)).toBeNull();
   });
 });
+
+describe("message queue last assistant message id", () => {
+  it("records id only on assistant text sends", async () => {
+    fake = fakeApi();
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["thought"], {
+      contentType: "thinking",
+      role: "assistant",
+      threadId: 42
+    });
+    manager.enqueueContentMessage(100, "@1", ["tool call"], {
+      contentType: "tool_use",
+      toolUseId: "t1",
+      role: "assistant",
+      threadId: 42
+    });
+    await manager.drain(100);
+    expect(manager.getLastAssistantMessageId(100, 42)).toBeNull();
+
+    manager.enqueueContentMessage(100, "@1", ["final reply"], {
+      contentType: "text",
+      role: "assistant",
+      threadId: 42
+    });
+    await manager.drain(100);
+    expect(manager.getLastAssistantMessageId(100, 42)).not.toBeNull();
+  });
+
+  it("tracks the LAST chunk id for multi-part assistant text", async () => {
+    fake = fakeApi();
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["part 1", "part 2", "part 3"], {
+      contentType: "text",
+      role: "assistant",
+      threadId: 42
+    });
+    await manager.drain(100);
+    // Three sends produce ids 1, 2, 3 (per fakeApi's auto-incrementing id).
+    expect(manager.getLastAssistantMessageId(100, 42)).toBe(3);
+  });
+
+  it("clearLastAssistantMessageId is per-topic", async () => {
+    fake = fakeApi();
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["reply"], {
+      contentType: "text",
+      role: "assistant",
+      threadId: 42
+    });
+    await manager.drain(100);
+    expect(manager.getLastAssistantMessageId(100, 42)).not.toBeNull();
+    manager.clearLastAssistantMessageId(100, 99);
+    expect(manager.getLastAssistantMessageId(100, 42)).not.toBeNull();
+    manager.clearLastAssistantMessageId(100, 42);
+    expect(manager.getLastAssistantMessageId(100, 42)).toBeNull();
+  });
+});

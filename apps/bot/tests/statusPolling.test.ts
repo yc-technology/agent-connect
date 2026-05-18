@@ -24,7 +24,8 @@ function deps(paneText: string) {
     drain: vi.fn(async () => undefined),
     getQueue: vi.fn(() => null),
     clearStatusMsgInfo: vi.fn(),
-    clearToolMsgIdsForTopic: vi.fn()
+    clearToolMsgIdsForTopic: vi.fn(),
+    clearLastAssistantMessageId: vi.fn()
   };
   return {
     api,
