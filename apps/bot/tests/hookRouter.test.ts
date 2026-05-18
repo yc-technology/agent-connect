@@ -152,6 +152,64 @@ describe("HookRouter drain-triggering events", () => {
   });
 });
 
+describe("HookRouter foreign-agent filter", () => {
+  test("claude bot ignores SessionStart with codex transcript_path", async () => {
+    const { registry, router } = setup();
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        {
+          session_id: "C1",
+          transcript_path: "/Users/x/.claude/projects/-Users-x-proj/abc.jsonl",
+          cwd: "/Users/x/proj"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(registry.getSessionByWindow("@0")?.session_id).toBe("C1");
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        {
+          session_id: "X1",
+          transcript_path: "/Users/x/.codex/sessions/2026/05/18/rollout-X1.jsonl",
+          cwd: "/Users/x/proj"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(registry.getSessionByWindow("@0")?.session_id).toBe("C1");
+  });
+
+  test("claude bot ignores Stop with codex transcript_path", async () => {
+    const { registry, router, dispatched } = setup();
+    const path = await writeFakeTranscript([
+      { type: "assistant", message: { content: [{ type: "text", text: "real" }] } }
+    ]);
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "C1", transcript_path: path, cwd: "/a" },
+        { window_id: "@0" }
+      )
+    );
+    const before = dispatched.length;
+    await router.dispatch(
+      envelope(
+        "Stop",
+        {
+          session_id: "X1",
+          transcript_path: "/Users/x/.codex/sessions/foreign.jsonl",
+          cwd: "/a"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(dispatched.length).toBe(before);
+    expect(registry.getSessionByWindow("@0")?.session_id).toBe("C1");
+  });
+});
+
 describe("HookRouter per-window queue", () => {
   test("SessionStart completes before subsequent Stop even when dispatched out of order", async () => {
     const { registry, router } = setup();
