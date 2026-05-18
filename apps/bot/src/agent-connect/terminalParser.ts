@@ -121,6 +121,10 @@ const UI_PATTERNS: UIPattern[] = [
 
 const LONG_DASH_RE = /^─{5,}$/u;
 const STATUS_SPINNERS = new Set(["·", "✻", "✽", "✶", "✳", "✢"]);
+// Claude `/compact` progress bar — a line of filled/unfilled blocks followed
+// by a percent. We splice the percent onto the spinner status so Telegram
+// users see "Compacting conversation… 47%" tick up live.
+const PROGRESS_BAR_RE = /^\s*[▰▱]+\s+(\d+)\s*%\s*$/u;
 
 function shortenSeparators(text: string): string {
   return text
@@ -198,16 +202,36 @@ export function parseStatusLine(paneText: string): string | null {
 
   if (chromeIdx === null) return null;
 
-  for (let i = chromeIdx - 1; i >= Math.max(chromeIdx - 5, 0); i -= 1) {
-    const line = (lines[i] ?? "").trim();
-    if (!line) continue;
-    const first = [...line][0];
-    if (first && STATUS_SPINNERS.has(first)) {
-      return line.slice(first.length).trim();
+  // Walk back from chrome looking for the spinner-prefixed status line.
+  // Claude attaches supplementary content BELOW the spinner — `/compact`
+  // shows "▰▰▱▱ NN%" + a "⎿ Tip:" with an indented continuation, so the
+  // spinner line can be 3-4 lines above chrome. Skip indented continuations
+  // and `⎿`-prefixed lines; capture progress-bar percent if seen so it can
+  // be appended to the status.
+  let statusText: string | null = null;
+  let progressPct: string | null = null;
+
+  for (let i = chromeIdx - 1; i >= Math.max(chromeIdx - 10, 0); i -= 1) {
+    const rawLine = lines[i] ?? "";
+    if (!rawLine.trim()) continue;
+
+    if (/^\s/.test(rawLine)) {
+      const m = rawLine.match(PROGRESS_BAR_RE);
+      if (m && !progressPct) progressPct = `${m[1]}%`;
+      continue;
     }
-    return null;
+    if (rawLine.trimStart().startsWith("⎿")) continue;
+
+    const trimmed = rawLine.trim();
+    const first = [...trimmed][0];
+    if (first && STATUS_SPINNERS.has(first)) {
+      statusText = trimmed.slice(first.length).trim();
+    }
+    break;
   }
-  return null;
+
+  if (!statusText) return null;
+  return progressPct ? `${statusText} ${progressPct}` : statusText;
 }
 
 export function isCompletedStatusLine(statusLine: string): boolean {

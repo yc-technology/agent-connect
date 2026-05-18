@@ -34,6 +34,36 @@ describe("parseStatusLine", () => {
     expect(parseStatusLine(`· one\n· two\nresult\n${chrome}`)).toBeNull();
   });
 
+  it("parses /compact progress: spinner + progress bar + Tip continuation", () => {
+    // Real `tmux capture-pane` shape during /compact: the spinner status line
+    // sits 3-4 rows above the chrome separator because Claude attaches a
+    // progress bar AND a "⎿ Tip:" with an indented continuation below it.
+    const pane =
+      "❯ /compact\n" +
+      "\n" +
+      "✻ Compacting conversation… (17s)\n" +
+      "  ▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 18%\n" +
+      "  ⎿  Tip: Working with HTML/CSS? Install the frontend-design plugin:\n" +
+      "     /plugin install frontend-design@claude-plugins-official\n" +
+      "\n" +
+      "──────────────────────────────────────\n" +
+      "❯ \n" +
+      "──────────────────────────────────────\n" +
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n";
+    expect(parseStatusLine(pane)).toBe("Compacting conversation… (17s) 18%");
+  });
+
+  it("falls back to status only when the progress bar percent is missing", () => {
+    const pane =
+      "✻ Working on it\n" +
+      "  ⎿  Tip: random hint here\n" +
+      "──────────────────────────────────────\n" +
+      "❯ \n" +
+      "──────────────────────────────────────\n" +
+      "  [Opus 4.6] Context: 50%\n";
+    expect(parseStatusLine(pane)).toBe("Working on it");
+  });
+
   it("identifies Claude completed status lines", () => {
     expect(isCompletedStatusLine("Cooked for 3s")).toBe(true);
     expect(isCompletedStatusLine("Baked for 1.5s")).toBe(true);
