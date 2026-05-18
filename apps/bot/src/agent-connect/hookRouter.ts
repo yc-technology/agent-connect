@@ -167,6 +167,31 @@ export class HookRouter {
     } else {
       registry.registerSession(args);
     }
+
+    // `/compact` runs a long progress bar in the TUI and ends silently —
+    // there is no transcript text the user would recognize as "compact done"
+    // until the next prompt fires a drain. Push an explicit notification so
+    // Telegram users know the session is ready to continue.
+    if (payload.source === "compact") {
+      await this.dispatchCompactDone(envelope);
+    }
+  }
+
+  private async dispatchCompactDone(envelope: HookEnvelope): Promise<void> {
+    try {
+      await this.deps.dispatcher(envelope.window_id, [
+        {
+          sessionId: envelope.payload.session_id,
+          windowId: envelope.window_id,
+          text: "✨ Compact done — conversation summarized, ready to continue.",
+          isComplete: true,
+          contentType: "text",
+          role: "assistant"
+        }
+      ]);
+    } catch (err) {
+      console.warn("[hookRouter dispatchCompactDone]", err);
+    }
   }
 
   private async onDrain(envelope: HookEnvelope): Promise<void> {

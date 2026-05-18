@@ -120,6 +120,70 @@ describe("HookRouter SessionStart", () => {
     expect(registry.getSession("S")?.last_byte_offset).toBe(0);
   });
 
+  test("source=compact dispatches a 'Compact done' notification through the pipeline", async () => {
+    // /compact ends silently — there's no transcript content the user would
+    // recognize as "done" until the next prompt fires a drain. Bot synthesizes
+    // an explicit notice via the same dispatcher pipeline as real assistant
+    // messages, so all downstream behaviors (messageQueue, status clearing,
+    // turn-end reactions) work uniformly.
+    const captured: Array<{ windowId: string; entries: unknown[] }> = [];
+    const registry = new SessionRegistry(inMemoryDb());
+    const dispatcher: Dispatcher = async (windowId, entries) => {
+      captured.push({ windowId, entries });
+    };
+    const router = new HookRouter({ registry, dispatcher, agentType: "claude" });
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        {
+          session_id: "S",
+          transcript_path: "/tmp/compact.jsonl",
+          cwd: "/a",
+          source: "compact"
+        },
+        { window_id: "@0" }
+      )
+    );
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
+      windowId: "@0",
+      entries: [
+        {
+          sessionId: "S",
+          windowId: "@0",
+          role: "assistant",
+          contentType: "text",
+          isComplete: true
+        }
+      ]
+    });
+    expect((captured[0]!.entries[0] as { text: string }).text).toContain("Compact done");
+  });
+
+  test("source=startup / source=resume do NOT fire compact-done notification", async () => {
+    const captured: Array<unknown[]> = [];
+    const registry = new SessionRegistry(inMemoryDb());
+    const dispatcher: Dispatcher = async (_windowId, entries) => {
+      captured.push(entries);
+    };
+    const router = new HookRouter({ registry, dispatcher, agentType: "claude" });
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "A", transcript_path: "/tmp/a.jsonl", cwd: "/x", source: "startup" },
+        { window_id: "@0" }
+      )
+    );
+    await router.dispatch(
+      envelope(
+        "SessionStart",
+        { session_id: "B", transcript_path: "/tmp/b.jsonl", cwd: "/x", source: "resume" },
+        { window_id: "@1" }
+      )
+    );
+    expect(captured).toEqual([]);
+  });
+
   test("source=resume with non-existent transcript_path falls back to offset 0", async () => {
     const { registry, router } = setup();
     await router.dispatch(
