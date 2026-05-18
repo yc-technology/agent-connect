@@ -175,4 +175,63 @@ describe("status polling", () => {
       warn.mockRestore();
     }
   });
+
+  it("treats topic_closed as benign (user may reopen) — does not kill window", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const testDeps = deps("");
+    testDeps.api.sendChatAction = vi.fn(async () => {
+      throw new Error("Bad Request: TOPIC_CLOSED");
+    });
+    testDeps.sessionManager.iterThreadBindings = function* () {
+      yield [100, 42, "@5"] satisfies [number, number, string];
+    };
+    const poller = new StatusPoller(testDeps, 0.001, 0.001);
+
+    try {
+      await poller.tick();
+
+      expect(testDeps.tmuxManager.killWindow).not.toHaveBeenCalled();
+      expect(testDeps.sessionManager.unbindThread).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("cleanup of missing window also drops registry row so FK CASCADE clears sessions", async () => {
+    const testDeps = deps("");
+    testDeps.tmuxManager.findWindowById = vi.fn(async () => null) as never;
+    testDeps.sessionManager.iterThreadBindings = function* () {
+      yield [100, 42, "@5"] satisfies [number, number, string];
+    };
+    const deleteWindow = vi.fn();
+    (testDeps as ReturnType<typeof deps> & { registry: { deleteWindow: typeof deleteWindow } }).registry = {
+      deleteWindow
+    };
+    const poller = new StatusPoller(testDeps, 0.001);
+
+    await poller.tick();
+
+    expect(deleteWindow).toHaveBeenCalledWith("@5");
+  });
+
+  it("cleanup on topic delete also drops registry row", async () => {
+    const testDeps = deps("");
+    testDeps.api.sendChatAction = vi.fn(async () => {
+      throw new Error("Bad Request: message thread not found");
+    });
+    testDeps.sessionManager.iterThreadBindings = function* () {
+      yield [100, 42, "@5"] satisfies [number, number, string];
+    };
+    const deleteWindow = vi.fn();
+    (testDeps as ReturnType<typeof deps> & { registry: { deleteWindow: typeof deleteWindow } }).registry = {
+      deleteWindow
+    };
+    const poller = new StatusPoller(testDeps, 0.001, 0.001);
+
+    await poller.tick();
+
+    expect(testDeps.tmuxManager.killWindow).toHaveBeenCalledWith("@5");
+    expect(deleteWindow).toHaveBeenCalledWith("@5");
+  });
 });

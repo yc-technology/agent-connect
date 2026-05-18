@@ -9,6 +9,7 @@ import { isCompletedStatusLine, isInteractiveUi, parseStatusLine } from "./termi
 import { isForumThreadId, threadOptions } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
 import type { SessionManager } from "./session.js";
+import type { SessionRegistry } from "./sessionRegistry.js";
 
 export const STATUS_POLL_INTERVAL = 1.0;
 export const TOPIC_CHECK_INTERVAL = 60.0;
@@ -19,6 +20,7 @@ export interface StatusPollingDeps extends InteractiveUiDeps {
     SessionManager,
     "iterThreadBindings" | "unbindThread"
   >;
+  registry?: Pick<SessionRegistry, "deleteWindow">;
   tmuxManager: Pick<TmuxManager, "findWindowById" | "capturePane" | "killWindow">;
   messageQueue: Pick<
     MessageQueueManager,
@@ -201,6 +203,10 @@ async function cleanupTopicBinding(
   }
 
   deps.sessionManager.unbindThread(userId, threadId);
+  // Drop the registry row so FK CASCADE clears sessions + user_window_offsets +
+  // any leftover thread_bindings row for this window. Without this, bot.sqlite
+  // accumulates one dead window per kill forever.
+  deps.registry?.deleteWindow(windowId);
   deps.messageQueue.clearStatusMsgInfo(userId, threadId);
   deps.messageQueue.clearToolMsgIdsForTopic(userId, threadId);
   await clearInteractiveMessage(deps, userId, threadId);
@@ -212,12 +218,9 @@ function isTopicInvalidError(error: unknown): boolean {
   if (
     message.includes("topic_id_invalid") ||
     message.includes("message thread not found") ||
-    message.includes("message to react not found") ||
-    message.includes("message not found") ||
     message.includes("thread not found") ||
     message.includes("topic not found") ||
-    message.includes("forum topic not found") ||
-    message.includes("topic_closed")
+    message.includes("forum topic not found")
   ) {
     return true;
   }
@@ -231,9 +234,13 @@ function isTopicInvalidError(error: unknown): boolean {
 
 function isBenignTopicProbeError(error: unknown): boolean {
   const message = errorMessage(error).toLowerCase();
+  // topic_closed: user closed but did not delete — they may reopen and expect
+  // the session to still be there. Don't kill the tmux window on this signal.
+  // (forum_topic_closed event handler handles the deliberate-close case.)
   return (
     message.includes("reaction_empty") ||
     message.includes("reactions are disabled") ||
+    message.includes("topic_closed") ||
     message.includes("not enough rights to send chat action")
   );
 }

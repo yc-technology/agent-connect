@@ -143,6 +143,7 @@ export class MultiBotRuntimeManager {
           api,
           routing: sessionManager,
           sessionManager,
+          registry,
           tmuxManager,
           messageQueue
         },
