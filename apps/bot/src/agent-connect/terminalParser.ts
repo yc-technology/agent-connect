@@ -234,8 +234,17 @@ export function parseStatusLine(paneText: string): string | null {
   return progressPct ? `${statusText} ${progressPct}` : statusText;
 }
 
+// Claude's "completed step" status line: a past-tense verb + duration, e.g.
+// "Cooked for 3s" / "Baked for 1.5s". statusPolling treats matches as
+// "already finished" and clears the Telegram status so the next content
+// message lands as a fresh send instead of overwriting a stale spinner.
+//
+// Use `\p{L}` (Unicode letter) not `[A-Za-z]` — Claude's verb pool includes
+// accented words like "Sautéed for 17s" / "Flambéed for 5s" that the
+// ASCII-only class silently skipped, leaving them visible in Telegram until
+// the next content arrived and edited them away.
 export function isCompletedStatusLine(statusLine: string): boolean {
-  return /^[A-Za-z][A-Za-z -]*ed for \d+(?:\.\d+)?s$/u.test(statusLine.trim());
+  return /^\p{L}[\p{L} -]*ed for \d+(?:\.\d+)?s$/u.test(statusLine.trim());
 }
 
 export function stripPaneChrome(lines: string[]): string[] {

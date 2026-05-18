@@ -69,6 +69,19 @@ describe("parseStatusLine", () => {
     expect(isCompletedStatusLine("Baked for 1.5s")).toBe(true);
     expect(isCompletedStatusLine("Reading file")).toBe(false);
   });
+
+  it("identifies accented past-tense verbs as completed status lines", () => {
+    // Claude's verb pool includes accented words; the previous
+    // ASCII-only [A-Za-z] regex silently let these through and they
+    // showed up as still-active status in Telegram.
+    expect(isCompletedStatusLine("Sautéed for 17s")).toBe(true);
+    expect(isCompletedStatusLine("Flambéed for 5s")).toBe(true);
+    expect(isCompletedStatusLine("Sautéed for 1.2s")).toBe(true);
+    // Negative cases — must NOT match these even with Unicode letter class.
+    expect(isCompletedStatusLine("Sauté for 17s")).toBe(false); // no trailing "ed"
+    expect(isCompletedStatusLine("Sautéing for 17s")).toBe(false);
+    expect(isCompletedStatusLine("Reading file")).toBe(false);
+  });
 });
 
 describe("interactive UI extraction", () => {
