@@ -28,6 +28,7 @@ export class HookRouter {
   }
 
   private async handleOne(envelope: HookEnvelope): Promise<void> {
+    if (this.shouldIgnore(envelope)) return;
     const event = envelope.payload.hook_event_name as HookEventName;
     switch (event) {
       case "SessionStart":
@@ -48,6 +49,25 @@ export class HookRouter {
       default:
         return;
     }
+  }
+
+  /**
+   * Multiple agents can live inside one tmux pane — Claude Code 2.x for
+   * example spawns a `codex-companion` subprocess that shares the parent's
+   * TMUX_PANE. Both sets of hooks route to the same bot by `tmux_session`,
+   * and a foreign-agent SessionStart would otherwise DELETE+INSERT over the
+   * real session row. Reject events whose transcript_path disagrees with this
+   * bot's configured agent type.
+   */
+  private shouldIgnore(envelope: HookEnvelope): boolean {
+    const tp = envelope.payload.transcript_path;
+    if (typeof tp !== "string" || !tp) return false;
+    const detected: AgentType | null = tp.includes("/.codex/")
+      ? "codex"
+      : tp.includes("/.claude/")
+        ? "claude"
+        : null;
+    return detected !== null && detected !== this.deps.agentType;
   }
 
   private async onSessionStart(envelope: HookEnvelope): Promise<void> {
