@@ -151,17 +151,20 @@ describe("message queue status handling", () => {
       fake = fakeApi();
       // The 1st edit throws a grammY-style 429; subsequent calls succeed.
       let editCount = 0;
-      fake.editMessageText = vi.fn(async (_chatId, _messageId, text) => {
-        editCount += 1;
-        if (editCount === 1) {
-          // grammY GrammyError shape: { parameters: { retry_after: N } }
-          const err = Object.assign(new Error("429: Too Many Requests: retry after 5"), {
-            parameters: { retry_after: 5 }
-          });
-          throw err;
+      const throwing429ThenOk: NonNullable<TelegramApiLike["editMessageText"]> = vi.fn(
+        async (_chatId, _messageId, text) => {
+          editCount += 1;
+          if (editCount === 1) {
+            // grammY GrammyError shape: { parameters: { retry_after: N } }
+            const err = Object.assign(new Error("429: Too Many Requests: retry after 5"), {
+              parameters: { retry_after: 5 }
+            });
+            throw err;
+          }
+          fake.edits.push(text);
         }
-        fake.edits.push(text);
-      }) as TelegramApiLike["editMessageText"];
+      );
+      fake.editMessageText = throwing429ThenOk;
       const manager = queue();
 
       manager.enqueueStatusUpdate(100, "@1", "initial", 42);
