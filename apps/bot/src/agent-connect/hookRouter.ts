@@ -21,20 +21,30 @@ export interface HookRouterDeps {
  * Seed `last_byte_offset` for a new session row whose transcript file may
  * already contain history we do NOT want to re-emit to Telegram.
  *
- * Two callers share this:
- *   - SessionStart with source="resume" (`claude --resume <id>`) — file holds
- *     the entire prior conversation, drain from 0 would dump all of it.
- *   - lazyRegisterIfMissing — bot started after Claude was already running, or
- *     a Telegram topic was bound to a pre-existing tmux window.
+ * Universal invariant: a fresh registration marks "anything we deliver from
+ * now on must be NEW". Used by every SessionStart (regardless of source) and
+ * by lazyRegisterIfMissing. Per-source effect on a real Claude/Codex setup:
+ *   - startup / clear: file is brand-new or empty → stat = 0 → no-op.
+ *     (Caveat: assumes `/clear` creates a fresh jsonl. Not empirically
+ *     verified; if Claude appends in place, the first post-clear turn is
+ *     silently skipped — same trade-off as resume. Send another prompt to
+ *     bootstrap.)
+ *   - resume: file has the full prior conversation → skip to EOF.
+ *   - compact: file is NOT truncated (Claude appends a summary) → skip
+ *     to EOF; the dispatchCompactDone notification is the user-visible
+ *     "finished" signal.
+ *   - lazyRegister (bot started after Claude was running, or topic bound
+ *     to pre-existing window): same skip-to-EOF semantics.
  *
- * Returns the file's current EOF position so the next drain reads zero bytes
- * for the triggering event. Falls back to 0 when the file does not exist yet
- * (fresh session whose transcript_path is registered before first write).
+ * Stat failure (file doesn't exist) silently returns 0, which is the
+ * correct "fresh session" behavior. Transient stat failures (permissions
+ * flip, NFS hiccup) ALSO return 0 — accepted trade-off: better to risk
+ * delivering one historical replay than to block session registration.
  *
- * Trade-off: the specific turn whose hook triggered the registration is also
- * skipped, because at hook-fire time the file already contains its
- * contribution. The user can send a fresh prompt to bootstrap — strictly
- * better than re-emitting an arbitrarily long history.
+ * Trade-off in general: the specific turn whose hook triggered the
+ * registration is also skipped, because at hook-fire time the file already
+ * contains its contribution. The user can send a fresh prompt to bootstrap —
+ * strictly better than re-emitting an arbitrarily long history.
  */
 async function offsetSkippingHistory(transcriptPath: string | null | undefined): Promise<number> {
   if (!transcriptPath) return 0;
@@ -148,15 +158,7 @@ export class HookRouter {
     const { payload } = envelope;
     registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
 
-    // Seed offset to current EOF regardless of source. Invariant: a
-    // SessionStart marks "anything we deliver from now on must be NEW".
-    //   - startup / clear: file is brand-new and empty → EOF = 0, unchanged.
-    //   - resume: file has the full prior conversation → skip it.
-    //   - compact: file is NOT actually truncated (Claude appends a summary
-    //     to the same jsonl) — drain-from-0 would re-emit everything we
-    //     already delivered. The dispatchCompactDone notification below is
-    //     the user-visible "compact finished" signal; the next user prompt
-    //     drains normally from the post-compact EOF.
+    // See offsetSkippingHistory above for the per-source rationale.
     const lastByteOffset = await offsetSkippingHistory(payload.transcript_path);
 
     const args = {
@@ -177,6 +179,11 @@ export class HookRouter {
     // there is no transcript text the user would recognize as "compact done"
     // until the next prompt fires a drain. Push an explicit notification so
     // Telegram users know the session is ready to continue.
+    //
+    // Awaited (not fire-and-forget) so subsequent hooks for the same window
+    // queue behind it and the user always sees "Compact done" before the
+    // next assistant text. Cost: a slow Telegram send blocks this window's
+    // queue for the duration. Acceptable — the alternative loses ordering.
     if (payload.source === "compact") {
       await this.dispatchCompactDone(envelope);
     }

@@ -204,10 +204,11 @@ export function parseStatusLine(paneText: string): string | null {
 
   // Walk back from chrome looking for the spinner-prefixed status line.
   // Claude attaches supplementary content BELOW the spinner — `/compact`
-  // shows "▰▰▱▱ NN%" + a "⎿ Tip:" with an indented continuation, so the
-  // spinner line can be 3-4 lines above chrome. Skip indented continuations
-  // and `⎿`-prefixed lines; capture progress-bar percent if seen so it can
-  // be appended to the status.
+  // shows "▰▰▱▱ NN%" plus a "⎿ Tip:" hint with an indented continuation,
+  // so the spinner line can be 3-4 lines above chrome. Every attachment
+  // Claude emits is indented (leading whitespace), so a single skip rule
+  // covers them all: opportunistically harvest a progress percent from the
+  // skipped lines so it can be appended to the status text.
   let statusText: string | null = null;
   let progressPct: string | null = null;
 
@@ -220,7 +221,6 @@ export function parseStatusLine(paneText: string): string | null {
       if (m && !progressPct) progressPct = `${m[1]}%`;
       continue;
     }
-    if (rawLine.trimStart().startsWith("⎿")) continue;
 
     const trimmed = rawLine.trim();
     const first = [...trimmed][0];

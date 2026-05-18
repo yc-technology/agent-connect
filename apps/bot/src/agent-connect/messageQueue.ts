@@ -5,13 +5,13 @@ import {
   sendWithFallback,
   type TelegramApiLike
 } from "./messageSender.js";
+import { isForumThreadId, threadOptions } from "./telegramThread.js";
+import type { ToolResultImage } from "./transcriptParser.js";
 
 // Minimum spacing between successive status edits on the same (user, thread).
 // 1500ms is comfortably under Telegram's typical edit rate cap and keeps
 // status text reasonably fresh during /compact and similar progress UIs.
 const STATUS_EDIT_THROTTLE_MS = 1500;
-import { isForumThreadId, threadOptions } from "./telegramThread.js";
-import type { ToolResultImage } from "./transcriptParser.js";
 
 export type MessageTaskType = "content" | "status_update" | "status_clear";
 export type MessageTaskRole = "user" | "assistant";
@@ -164,7 +164,16 @@ export class MessageQueueManager {
   }
 
   clearStatusMsgInfo(userId: number, threadId: number | null = null): void {
-    const key = statusKey(userId, threadId ?? 0);
+    this.forgetStatusKey(statusKey(userId, threadId ?? 0));
+  }
+
+  /**
+   * Drop ALL per-status-key state — both the messageId/text record and the
+   * edit cooldown timestamp. Anything that deletes from `statusMessageInfo`
+   * MUST go through this so a stale cooldown can't mis-throttle the next
+   * status that lands under the same key.
+   */
+  private forgetStatusKey(key: StatusKey): void {
     this.statusMessageInfo.delete(key);
     this.statusEditCooldownUntil.delete(key);
   }
@@ -325,7 +334,7 @@ export class MessageQueueManager {
         this.statusMessageInfo.set(key, { messageId: current.messageId, windowId, text });
         this.statusEditCooldownUntil.set(key, Date.now() + STATUS_EDIT_THROTTLE_MS);
       } else {
-        this.statusMessageInfo.delete(key);
+        this.forgetStatusKey(key);
         await this.sendStatusMessage(userId, tid, windowId, text);
       }
     } catch (error) {
@@ -366,7 +375,7 @@ export class MessageQueueManager {
     const key = statusKey(userId, tid);
     const info = this.statusMessageInfo.get(key);
     if (!info) return;
-    this.statusMessageInfo.delete(key);
+    this.forgetStatusKey(key);
     const threadId = tid === 0 ? null : tid;
     const chatId = this.routing.resolveChatId(userId, threadId);
     await this.api.deleteMessage?.(chatId, info.messageId);
@@ -382,7 +391,7 @@ export class MessageQueueManager {
     const info = this.statusMessageInfo.get(key);
     if (!info) return null;
 
-    this.statusMessageInfo.delete(key);
+    this.forgetStatusKey(key);
     const threadId = tid === 0 ? null : tid;
     const chatId = this.routing.resolveChatId(userId, threadId);
 
