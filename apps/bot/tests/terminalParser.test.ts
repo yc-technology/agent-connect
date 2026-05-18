@@ -96,6 +96,26 @@ describe("interactive UI extraction", () => {
     expect(result?.content).not.toContain("现在可以了你再试试");
   });
 
+  it("extracts Codex Settings: /model picker", () => {
+    const pane =
+      "  some prior output\n" +
+      "\n" +
+      "  Select Model and Effort\n" +
+      "  Access legacy models by running codex -m <model_name> or in your config.toml\n" +
+      "\n" +
+      "› 1. gpt-5.5 (current)    Frontier model.\n" +
+      "  2. gpt-5.4              Strong model.\n" +
+      "  3. gpt-5.4-mini         Small, fast.\n" +
+      "\n" +
+      "  Press enter to confirm or esc to go back\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("Settings");
+    expect(result?.content).toContain("Select Model and Effort");
+    expect(result?.content).toContain("gpt-5.5 (current)");
+    expect(result?.content).toContain("Press enter to confirm or esc to go back");
+    expect(result?.content).not.toContain("some prior output");
+  });
+
   it("extracts Codex Edit/Patch approval (Would you like to make the following edits)", () => {
     const pane =
       "• Added .approval-test.tmp (+1 -0)\n" +

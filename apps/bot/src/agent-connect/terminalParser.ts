@@ -87,6 +87,12 @@ const UI_PATTERNS: UIPattern[] = [
     ],
     bottom: [/^\s*Press enter to confirm or esc to cancel/i],
     minGap: 2
+  },
+  {
+    name: "Settings",
+    top: [/^\s*Select Model and Effort/, /^\s*Select Approval Mode/],
+    bottom: [/^\s*Press enter to confirm or esc to (?:go back|cancel|exit)/i],
+    minGap: 2
   }
 ];
 
