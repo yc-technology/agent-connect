@@ -83,7 +83,7 @@ const UI_PATTERNS: UIPattern[] = [
     name: "PermissionPrompt",
     top: [
       /^\s*Would you like to run the following command\?/,
-      /^\s*Would you like to apply the following (?:edit|patch|change)/i
+      /^\s*Would you like to make the following edits?\?/
     ],
     bottom: [/^\s*Press enter to confirm or esc to cancel/i],
     minGap: 2

@@ -96,6 +96,25 @@ describe("interactive UI extraction", () => {
     expect(result?.content).not.toContain("现在可以了你再试试");
   });
 
+  it("extracts Codex Edit/Patch approval (Would you like to make the following edits)", () => {
+    const pane =
+      "• Added .approval-test.tmp (+1 -0)\n" +
+      "    1 +approval test\n" +
+      "\n" +
+      "  Would you like to make the following edits?\n" +
+      "\n" +
+      "› 1. Yes, proceed (y)\n" +
+      "  2. Yes, and don't ask again for these files (a)\n" +
+      "  3. No, and tell Codex what to do differently (esc)\n" +
+      "\n" +
+      "  Press enter to confirm or esc to cancel\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("PermissionPrompt");
+    expect(result?.content).toContain("Would you like to make the following edits");
+    expect(result?.content).toContain("Yes, and don't ask again for these files");
+    expect(result?.content).toContain("Press enter to confirm");
+  });
+
   it("extracts Codex AskUserQuestion (numbered options + tab/enter/esc footer)", () => {
     // Real Codex 0.130 pane capture during an AskUserQuestion prompt.
     const pane =
