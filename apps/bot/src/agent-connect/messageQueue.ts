@@ -1,3 +1,4 @@
+import { logger } from "./logger.js";
 import {
   editWithFallback,
   retryAfterSeconds,
@@ -7,6 +8,12 @@ import {
 } from "./messageSender.js";
 import { isForumThreadId, threadOptions } from "./telegramThread.js";
 import type { ToolResultImage } from "./transcriptParser.js";
+
+function previewText(text: string | null | undefined, max = 80): string {
+  if (!text) return "";
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  return trimmed.length > max ? trimmed.slice(0, max) + "…" : trimmed;
+}
 
 // Minimum spacing between successive status edits on the same (user, thread).
 // 1500ms is comfortably under Telegram's typical edit rate cap and keeps
@@ -183,7 +190,19 @@ export class MessageQueueManager {
           await this.clearStatusMessage(userId, task.threadId ?? 0);
         }
       } catch (err) {
-        console.warn("[messageQueue task]", err);
+        logger().error(
+          {
+            userId,
+            taskType: task.taskType,
+            contentType: task.contentType,
+            role: task.role ?? null,
+            threadId: task.threadId ?? null,
+            windowId: task.windowId ?? null,
+            textPreview: previewText(task.text ?? task.parts.join(" ")),
+            err
+          },
+          "messageQueue task failed — dropping it and continuing"
+        );
       }
     }
   }

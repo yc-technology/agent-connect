@@ -3,6 +3,7 @@ import { SessionRegistry } from "../src/agent-connect/sessionRegistry.js";
 import { HookRouter } from "../src/agent-connect/hookRouter.js";
 import { inMemoryDb } from "./helpers/registryFixtures.js";
 import { envelope } from "./helpers/hookEnvelope.js";
+import { installCaptureLogger } from "./helpers/testLogger.js";
 import { appendToTranscript, writeFakeTranscript } from "./helpers/transcriptFixtures.js";
 import type { Dispatcher } from "../src/agent-connect/drainTranscript.js";
 
@@ -547,7 +548,7 @@ describe("HookRouter onTurnEnd", () => {
     const onTurnEnd = async () => {
       throw new Error("reaction api down");
     };
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = installCaptureLogger();
     try {
       const router = new HookRouter({
         registry,
@@ -564,9 +565,11 @@ describe("HookRouter onTurnEnd", () => {
       await router.dispatch(envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
       // dispatch is still reachable for next event
       await router.dispatch(envelope("Stop", { session_id: "S", transcript_path: path, cwd: "/a" }, { window_id: "@0" }));
-      expect(warn).toHaveBeenCalledWith("[hookRouter onTurnEnd]", expect.any(Error));
+      const onTurnEndWarns = log.at("warn").filter((r) => r.msg.includes("onTurnEnd"));
+      expect(onTurnEndWarns.length).toBeGreaterThan(0);
+      expect(onTurnEndWarns[0]).toMatchObject({ windowId: "@0", outcome: "success" });
     } finally {
-      warn.mockRestore();
+      log.restore();
     }
   });
 });

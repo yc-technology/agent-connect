@@ -1,5 +1,6 @@
 import { Config, sanitizeSensitiveEnv } from "./config.js";
 import { SqliteConfigStore } from "./configStore.js";
+import { logger } from "./logger.js";
 import { hookRouterRegistry, MultiBotRuntimeManager } from "./multiBotRuntime.js";
 import { proxyConfigLabel, setupHttpProxyFromEnv } from "./proxy.js";
 import {
@@ -22,7 +23,7 @@ export async function runBotService(
   const config = new Config(env, { requireTelegramConfig: false, sanitizeProcessEnv: false });
   const proxyConfig = setupHttpProxyFromEnv(env);
   if (proxyConfig.enabled) {
-    console.info(`HTTP proxy enabled: ${proxyConfigLabel(proxyConfig)}`);
+    logger().info({ proxy: proxyConfigLabel(proxyConfig) }, "http proxy enabled");
   }
 
   const runtimeDir = agentConnectDir(env);
@@ -87,20 +88,20 @@ async function syncAgentHooks(env: NodeJS.ProcessEnv, hookEntrypoint?: string): 
       ...hookOptions
     });
     if (claudeResult.code !== 0) {
-      console.warn(claudeResult.message);
+      logger().warn({ agent: "claude", msg: claudeResult.message }, "hook install reported a problem");
     } else if (!claudeResult.message.includes("already synchronized")) {
-      console.info(claudeResult.message);
+      logger().info({ agent: "claude" }, claudeResult.message);
     }
 
     const codexResult = await installCodexHook({
       ...hookOptions
     });
     if (codexResult.code !== 0) {
-      console.warn(codexResult.message);
+      logger().warn({ agent: "codex", msg: codexResult.message }, "hook install reported a problem");
     } else if (!codexResult.message.includes("already synchronized")) {
-      console.info(codexResult.message);
+      logger().info({ agent: "codex" }, codexResult.message);
     }
   } catch (error) {
-    console.warn("Failed to synchronize agent SessionStart hooks.", error);
+    logger().warn({ err: error }, "failed to synchronize agent SessionStart hooks");
   }
 }

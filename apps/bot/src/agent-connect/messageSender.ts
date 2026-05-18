@@ -1,4 +1,5 @@
 import { InputFile, type Bot } from "grammy";
+import { logger } from "./logger.js";
 import {
   convertMarkdownToTelegramEntities,
   stripSentinels,
@@ -242,5 +243,5 @@ export function retryAfterSeconds(error: unknown): number | null {
 
 function logFormatFallback(operation: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.warn(`Telegram formatted ${operation} failed; trying fallback: ${message}`);
+  logger().warn({ operation, err: message }, "telegram formatted send failed; trying plain fallback");
 }

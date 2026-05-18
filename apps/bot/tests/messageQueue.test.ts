@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { canMergeTasks, MessageQueueManager, type MessageTask } from "../src/agent-connect/messageQueue.js";
 import type { TelegramApiLike } from "../src/agent-connect/messageSender.js";
+import { installCaptureLogger } from "./helpers/testLogger.js";
 
 function task(overrides: Partial<MessageTask> = {}): MessageTask {
   return {
@@ -266,22 +267,27 @@ describe("message queue status handling", () => {
         throw err;
       });
       fake.sendMessage = always429;
-      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const log = installCaptureLogger();
       const manager = queue();
 
-      manager.enqueueContentMessage(100, "@1", ["doomed"], { threadId: 42 });
-      const drainP = manager.drain(100);
-      // Advance enough time for all retries to play out (3 sleeps of ~1.25s
-      // between 4 attempts).
-      await vi.advanceTimersByTimeAsync(10_000);
-      await drainP;
-      // 4 attempts: initial + 3 retries. After the 4th throw, withRetryAfter
-      // gives up and re-throws; runDrainLoop catches + warns. Bounded — no
-      // infinite loop.
-      expect(sendCount).toBe(4);
-      expect(fake.messages).toEqual([]);
-      expect(warn).toHaveBeenCalledWith("[messageQueue task]", expect.any(Error));
-      warn.mockRestore();
+      try {
+        manager.enqueueContentMessage(100, "@1", ["doomed"], { threadId: 42 });
+        const drainP = manager.drain(100);
+        // Advance enough time for all retries to play out (3 sleeps of ~1.25s
+        // between 4 attempts).
+        await vi.advanceTimersByTimeAsync(10_000);
+        await drainP;
+        // 4 attempts: initial + 3 retries. After the 4th throw, withRetryAfter
+        // gives up and re-throws; runDrainLoop catches + errors. Bounded —
+        // no infinite loop.
+        expect(sendCount).toBe(4);
+        expect(fake.messages).toEqual([]);
+        const errors = log.at("error").filter((r) => r.msg.includes("messageQueue task failed"));
+        expect(errors.length).toBeGreaterThan(0);
+        expect(errors[0]).toMatchObject({ userId: 100, taskType: "content", contentType: "text" });
+      } finally {
+        log.restore();
+      }
     } finally {
       vi.useRealTimers();
     }

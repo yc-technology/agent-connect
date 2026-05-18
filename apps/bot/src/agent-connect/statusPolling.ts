@@ -4,6 +4,7 @@ import {
   handleInteractiveUi,
   type InteractiveUiDeps
 } from "./interactiveUi.js";
+import { logger } from "./logger.js";
 import type { MessageQueueManager } from "./messageQueue.js";
 import { isCompletedStatusLine, isInteractiveUi, parseStatusLine } from "./terminalParser.js";
 import { isForumThreadId, threadOptions } from "./telegramThread.js";
@@ -118,8 +119,10 @@ export class StatusPoller {
     while (this.running) {
       try {
         await this.tick();
-      } catch {
-        // Keep polling after transient tmux or Telegram errors.
+      } catch (err) {
+        // Keep polling after transient tmux or Telegram errors, but log so
+        // a persistent failure can be diagnosed (e.g. tmux server died).
+        logger().warn({ err }, "statusPolling tick failed");
       }
       if (this.running) await this.sleepPollInterval();
     }
@@ -178,8 +181,9 @@ export class StatusPoller {
     const last = this.topicProbeWarnings.get(key) ?? 0;
     if (now - last < TOPIC_PROBE_WARNING_INTERVAL) return;
     this.topicProbeWarnings.set(key, now);
-    console.warn(
-      `Topic probe failed for user=${userId} thread=${threadId} window=${windowId}: ${errorMessage(error)}`
+    logger().warn(
+      { userId, threadId, windowId, err: errorMessage(error) },
+      "statusPolling topic probe failed"
     );
   }
 

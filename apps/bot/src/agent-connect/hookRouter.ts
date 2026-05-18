@@ -3,7 +3,16 @@ import type { SessionRegistry } from "./sessionRegistry.js";
 import type { Dispatcher } from "./drainTranscript.js";
 import { drainTranscript } from "./drainTranscript.js";
 import type { AgentType, HookEnvelope, HookEventName } from "./hookTypes.js";
+import { logger } from "./logger.js";
 import { TranscriptParser } from "./transcriptParser.js";
+
+function envelopeCtx(envelope: HookEnvelope): Record<string, unknown> {
+  return {
+    windowId: envelope.window_id,
+    sessionId: envelope.payload.session_id,
+    event: envelope.payload.hook_event_name
+  };
+}
 
 export type TurnEndOutcome = "success" | "failure";
 export type OnTurnEnd = (windowId: string, outcome: TurnEndOutcome) => Promise<void>;
@@ -65,7 +74,7 @@ export class HookRouter {
     const key = envelope.window_id;
     const prev = this.windowQueues.get(key) ?? Promise.resolve();
     const next = prev.then(() => this.handleOne(envelope)).catch((err) => {
-      console.warn("[hookRouter]", err);
+      logger().warn({ ...envelopeCtx(envelope), err }, "hookRouter dispatch failed");
     });
     this.windowQueues.set(key, next);
     next.finally(() => {
@@ -113,7 +122,7 @@ export class HookRouter {
     try {
       await this.deps.onTurnEnd(envelope.window_id, outcome);
     } catch (err) {
-      console.warn("[hookRouter onTurnEnd]", err);
+      logger().warn({ ...envelopeCtx(envelope), outcome, err }, "hookRouter onTurnEnd callback failed");
     }
   }
 
@@ -130,7 +139,7 @@ export class HookRouter {
     try {
       await this.deps.onStatusEvent(envelope.window_id, `⚠️ Approval needed: ${summary}`);
     } catch (err) {
-      console.warn("[hookRouter onStatusEvent]", err);
+      logger().warn({ ...envelopeCtx(envelope), err }, "hookRouter onStatusEvent callback failed");
     }
   }
 
@@ -202,7 +211,7 @@ export class HookRouter {
         }
       ]);
     } catch (err) {
-      console.warn("[hookRouter dispatchCompactDone]", err);
+      logger().warn({ ...envelopeCtx(envelope), err }, "hookRouter compact-done dispatch failed");
     }
   }
 
@@ -232,6 +241,7 @@ export class HookRouter {
     if (!payload.session_id || !payload.transcript_path) return;
     if (this.deps.registry.getSession(payload.session_id)) return;
     this.deps.registry.upsertWindow(envelope.window_id, envelope.window_name, payload.cwd);
+    const lastByteOffset = await offsetSkippingHistory(payload.transcript_path);
     this.deps.registry.registerSession({
       sessionId: payload.session_id,
       windowId: envelope.window_id,
@@ -239,7 +249,11 @@ export class HookRouter {
       transcriptPath: payload.transcript_path,
       cwd: payload.cwd,
       source: "lazy",
-      lastByteOffset: await offsetSkippingHistory(payload.transcript_path)
+      lastByteOffset
     });
+    logger().info(
+      { ...envelopeCtx(envelope), transcriptPath: payload.transcript_path, lastByteOffset },
+      "lazy-registered session from non-SessionStart hook (bot started after agent, or topic bound to pre-existing window)"
+    );
   }
 }

@@ -8,6 +8,7 @@ import type { BotConfigRecord } from "./botConfig.js";
 import type { SqliteConfigStore } from "./configStore.js";
 import { drainTranscript, type Dispatcher, type NewMessageLike } from "./drainTranscript.js";
 import { HookRouter } from "./hookRouter.js";
+import { logger } from "./logger.js";
 import { MessageQueueManager } from "./messageQueue.js";
 import { telegramApiFromGrammy } from "./messageSender.js";
 import { migrateJsonToSqliteIfNeeded } from "./migration.js";
@@ -81,7 +82,7 @@ export class MultiBotRuntimeManager {
       try {
         await this.startBot(record);
       } catch (error) {
-        console.error(`Failed to start bot runtime ${record.id}:`, error);
+        logger().error({ botId: record.id, name: record.name, err: error }, "failed to start bot runtime");
       }
     }
   }
@@ -161,7 +162,17 @@ export class MultiBotRuntimeManager {
         try {
           await drainTranscript(registry, dispatcher, session.session_id);
         } catch (error) {
-          console.warn(`startup drainTranscript ${session.session_id} failed:`, error);
+          logger().warn(
+            {
+              botId: record.id,
+              sessionId: session.session_id,
+              windowId: session.window_id,
+              transcriptPath: session.transcript_path,
+              lastByteOffset: session.last_byte_offset,
+              err: error
+            },
+            "startup catch-up drainTranscript failed"
+          );
         }
       }
 
@@ -199,7 +210,7 @@ export class MultiBotRuntimeManager {
       });
 
       void bot.start({ allowed_updates: ["message", "callback_query"] }).catch((error: unknown) => {
-        console.error(`Bot runtime ${record.id} stopped with error:`, error);
+        logger().error({ botId: record.id, err: error }, "bot runtime stopped with error");
         this.setStatus(record.id, {
           running: false,
           stoppedAt: new Date().toISOString(),
@@ -253,12 +264,12 @@ export class MultiBotRuntimeManager {
     try {
       await instance.bot.stop();
     } catch (error) {
-      console.error(`Failed to stop bot runtime ${instance.id}:`, error);
+      logger().error({ botId: instance.id, err: error }, "failed to stop bot runtime");
     }
     try {
       instance.db.close();
     } catch (error) {
-      console.error(`Failed to close bot.sqlite for ${instance.id}:`, error);
+      logger().error({ botId: instance.id, err: error }, "failed to close bot.sqlite");
     }
   }
 

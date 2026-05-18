@@ -61,12 +61,14 @@
     "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm build"
   },
   "dependencies": {
+    "@yc-tech/telegramify-markdown": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^16.4.7",
     "fastify": "^5.8.5",
     "grammy": "^1.43.0",
+    "pino": "^10.3.1",
+    "pino-roll": "^4.0.0",
     "sharp": "^0.34.5",
-    "@yc-tech/telegramify-markdown": "workspace:*",
     "undici": "^8.3.0"
   },
   "devDependencies": {

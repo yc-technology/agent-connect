@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { resetInteractiveState } from "../src/agent-connect/interactiveUi.js";
 import { StatusPoller, updateStatusMessage } from "../src/agent-connect/statusPolling.js";
 import type { TelegramApiLike } from "../src/agent-connect/messageSender.js";
+import { installCaptureLogger } from "./helpers/testLogger.js";
 
 const chrome =
   "──────────────────────────────────────\n" +
@@ -134,7 +135,7 @@ describe("status polling", () => {
   });
 
   it("logs non-deletion topic probe failures without clearing the binding", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = installCaptureLogger();
     const testDeps = deps("");
     testDeps.api.sendChatAction = vi.fn(async () => {
       throw new Error("Bad Request: chat action failed");
@@ -149,14 +150,17 @@ describe("status polling", () => {
 
       expect(testDeps.tmuxManager.killWindow).not.toHaveBeenCalled();
       expect(testDeps.sessionManager.unbindThread).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat action failed"));
+      const probeWarns = log.at("warn").filter((r) => r.msg.includes("topic probe failed"));
+      expect(probeWarns.length).toBeGreaterThan(0);
+      expect(probeWarns[0]).toMatchObject({ userId: 100, threadId: 42, windowId: "@5" });
+      expect(String(probeWarns[0]!.err)).toContain("chat action failed");
     } finally {
-      warn.mockRestore();
+      log.restore();
     }
   });
 
   it("ignores benign topic probe failures", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = installCaptureLogger();
     const testDeps = deps("");
     testDeps.api.sendChatAction = vi.fn(async () => {
       throw new Error("Bad Request: REACTION_EMPTY");
@@ -171,14 +175,14 @@ describe("status polling", () => {
 
       expect(testDeps.tmuxManager.killWindow).not.toHaveBeenCalled();
       expect(testDeps.sessionManager.unbindThread).not.toHaveBeenCalled();
-      expect(warn).not.toHaveBeenCalled();
+      expect(log.at("warn").filter((r) => r.msg.includes("topic probe"))).toEqual([]);
     } finally {
-      warn.mockRestore();
+      log.restore();
     }
   });
 
   it("treats topic_closed as benign (user may reopen) — does not kill window", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const log = installCaptureLogger();
     const testDeps = deps("");
     testDeps.api.sendChatAction = vi.fn(async () => {
       throw new Error("Bad Request: TOPIC_CLOSED");
@@ -193,9 +197,9 @@ describe("status polling", () => {
 
       expect(testDeps.tmuxManager.killWindow).not.toHaveBeenCalled();
       expect(testDeps.sessionManager.unbindThread).not.toHaveBeenCalled();
-      expect(warn).not.toHaveBeenCalled();
+      expect(log.at("warn").filter((r) => r.msg.includes("topic probe"))).toEqual([]);
     } finally {
-      warn.mockRestore();
+      log.restore();
     }
   });
 

@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import pino from "pino";
 import type { Config } from "./config.js";
 import {
   type BotConfigRecord,
@@ -11,6 +12,7 @@ import type { SqliteConfigStore } from "./configStore.js";
 import type { BotRuntimeStatus } from "./multiBotRuntime.js";
 import type { HookRouter } from "./hookRouter.js";
 import type { HookEnvelope } from "./hookTypes.js";
+import { logger } from "./logger.js";
 import { proxyConfigLabel, readHttpProxyConfig } from "./proxy.js";
 
 export type HookRouterLookup = (tmuxSession: string) => HookRouter | null;
@@ -32,7 +34,12 @@ export function registerHookEndpoint(fastify: FastifyInstance, lookup: HookRoute
     if (router) {
       const env = body as HookEnvelope;
       setImmediate(() => {
-        router.dispatch(env).catch((err) => console.warn("[hookEndpoint]", err));
+        router.dispatch(env).catch((err) =>
+          logger().warn(
+            { windowId: env.window_id, sessionId: env.payload.session_id, event: env.payload.hook_event_name, err },
+            "hookEndpoint dispatch failed"
+          )
+        );
       });
     }
     return reply.code(202).send();
@@ -91,14 +98,19 @@ interface BotConnectivityResponse {
 }
 
 export function createServer(config: Config, state: RuntimeState, deps: ServerDeps = {}): FastifyInstance {
-  const server = Fastify({
-    logger:
-      process.env.NODE_ENV === "test"
-        ? false
-        : {
-            level: process.env.AGENT_CONNECT_LOG_LEVEL ?? "info"
-          }
-  });
+  // Reuse the shared pino logger so HTTP request logs land in the same file
+  // (and rotate the same way) as the rest of the bot. Fastify 5: pass
+  // `loggerInstance` (pre-built pino) NOT `logger` (which expects options).
+  // Test mode uses a silent pino instead of `logger: false` so the Fastify
+  // return type stays uniform across branches.
+  const isTest = process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+  const fastifyLogger = isTest ? pino({ level: "silent" }) : logger().child({ component: "http" });
+  // Cast away the specialized Logger generic that Fastify infers from a
+  // typed loggerInstance — downstream helpers (registerHookEndpoint,
+  // registerManagementRoutes) expect the default FastifyBaseLogger generic.
+  // pino is structurally compatible at runtime; the only difference is
+  // `msgPrefix?` vs `msgPrefix` (pino marks it optional).
+  const server = Fastify({ loggerInstance: fastifyLogger }) as unknown as FastifyInstance;
 
   server.get("/healthz", async () => ({
     ok: true,
@@ -270,9 +282,9 @@ async function restoreRuntime(
       await runtimeManager.stopBot(previous.id);
     }
   } catch (error) {
-    console.error(
-      `Failed to restore bot runtime ${previous.id} after management update failure:`,
-      error
+    logger().error(
+      { botId: previous.id, err: error },
+      "failed to restore bot runtime after management update failure"
     );
   } finally {
     state.activeBots = runtimeManager.activeCount();

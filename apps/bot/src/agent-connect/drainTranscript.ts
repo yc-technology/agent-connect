@@ -1,4 +1,5 @@
 import { open, stat } from "node:fs/promises";
+import { logger } from "./logger.js";
 import { TranscriptParser, type PendingToolInfo, type ToolResultImage } from "./transcriptParser.js";
 import type { SessionRegistry, SessionRow } from "./sessionRegistry.js";
 
@@ -46,6 +47,21 @@ export async function drainTranscript(
 
     let startOffset = session.last_byte_offset;
     if (info.size < startOffset) {
+      // File shrank below our recorded offset — Claude/Codex rewrote the
+      // transcript (typically /compact rotating to a new file, or /clear
+      // creating a fresh one). Reset and re-read from the beginning so the
+      // user sees the post-rewrite content. Only diagnostic for this kind
+      // of event, so log it.
+      logger().info(
+        {
+          sessionId,
+          windowId: session.window_id,
+          transcriptPath: session.transcript_path,
+          previousOffset: startOffset,
+          currentSize: info.size
+        },
+        "drainTranscript truncation detected — resetting offset to 0"
+      );
       registry.setOffset(sessionId, 0);
       pendingToolsCache.delete(sessionId);
       startOffset = 0;
