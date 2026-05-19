@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   editWithFallback,
   ensureEntityFormatted,
@@ -10,6 +10,13 @@ import {
 import { EXPANDABLE_QUOTE_END, EXPANDABLE_QUOTE_START } from "../src/agent-connect/transcriptParser.js";
 
 describe("messageSender", () => {
+  // Tests below toggle AGENT_CONNECT_IMAGE_AS_DOCUMENT per case; always
+  // clear it after so the default (document) is the implicit starting
+  // point and other test files aren't infected.
+  afterEach(() => {
+    delete process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT;
+  });
+
   it("strips expandable quote sentinels", () => {
     expect(stripSentinels(`${EXPANDABLE_QUOTE_START}text${EXPANDABLE_QUOTE_END}`)).toBe("text");
   });
@@ -86,7 +93,10 @@ describe("messageSender", () => {
     );
   });
 
-  it("sends one photo or a media group with mediaType-derived filenames", async () => {
+  it("sends one photo or a media group with mediaType-derived filenames (legacy photo path)", async () => {
+    // These older tests verify the photo path specifically — opt out of
+    // the new document default by setting the env explicitly.
+    process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT = "false";
     const api: TelegramApiLike = {
       sendMessage: vi.fn(),
       sendPhoto: vi.fn(),
@@ -118,6 +128,7 @@ describe("messageSender", () => {
   });
 
   it("falls back to sendDocument when sendPhoto throws a non-rate-limit error", async () => {
+    process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT = "false"; // opt into photo path
     // PHOTO_INVALID_DIMENSIONS / 413 too-large → photo path rejects.
     // Document path should be tried with the same caption + filename.
     const photoErr = new Error("Bad Request: PHOTO_INVALID_DIMENSIONS");
@@ -149,6 +160,7 @@ describe("messageSender", () => {
   });
 
   it("media-group fallback to sendDocument lifts caption onto the first document only", async () => {
+    process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT = "false"; // opt into photo path
     const api: TelegramApiLike = {
       sendMessage: vi.fn(),
       sendMediaGroup: vi.fn(async () => {
@@ -180,6 +192,7 @@ describe("messageSender", () => {
   });
 
   it("propagates retry-after instead of falling back to sendDocument on 429", async () => {
+    process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT = "false"; // opt into photo path
     const api: TelegramApiLike = {
       sendMessage: vi.fn(),
       sendPhoto: vi.fn(async () => {
@@ -193,6 +206,48 @@ describe("messageSender", () => {
       sendPhoto(api, 100, [{ mediaType: "image/png", data: Buffer.from("x") }])
     ).rejects.toMatchObject({ parameters: { retry_after: 3 } });
     expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("default behavior: image-bearing tool_results route to sendDocument (preserves quality)", async () => {
+    // Telegram's `sendPhoto` recompresses to ~1280px JPEG-ish which
+    // destroys legibility on screenshots / dense UI. Default is now
+    // document mode (env unset → preferDocumentForImages() === true).
+    delete process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT;
+    const api: TelegramApiLike = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(),
+      sendDocument: vi.fn()
+    };
+
+    await sendPhoto(api, 100, [{ mediaType: "image/png", data: Buffer.from("png") }], {
+      caption: "📷 Screenshot"
+    });
+
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+    expect(api.sendDocument).toHaveBeenCalledWith(100, Buffer.from("png"), {
+      caption: "📷 Screenshot",
+      filename: "screenshot.png"
+    });
+  });
+
+  it("opt-out: AGENT_CONNECT_IMAGE_AS_DOCUMENT=false uses the photo path", async () => {
+    process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT = "false";
+    try {
+      const api: TelegramApiLike = {
+        sendMessage: vi.fn(),
+        sendPhoto: vi.fn(),
+        sendDocument: vi.fn()
+      };
+
+      await sendPhoto(api, 100, [{ mediaType: "image/png", data: Buffer.from("png") }]);
+
+      expect(api.sendPhoto).toHaveBeenCalledWith(100, Buffer.from("png"), {
+        filename: "screenshot.png"
+      });
+      expect(api.sendDocument).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT;
+    }
   });
 
   it("routes Telegram-unsupported MIME types straight to sendDocument", async () => {

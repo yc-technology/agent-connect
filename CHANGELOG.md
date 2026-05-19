@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.2.1 — 2026-05-19
+
+### 🐛 Fixed
+
+- Telegram image quality: `sendPhoto` recompresses to ~1280px JPEG-ish,
+  which destroys legibility on screenshots / dense UI captures. New
+  default routes image-bearing tool_results to `sendDocument` (no
+  compression, original quality, 50 MB cap). Modern Telegram clients
+  still render an inline thumbnail for image documents — the UX
+  difference is minor; the quality gain is large.
+
+### 🎛 New env knob
+
+- `AGENT_CONNECT_IMAGE_AS_DOCUMENT` (default `true`). Set to `false` to
+  opt back into the old compressed-but-inline-preview photo path.
+
+---
+
 ## 0.2.0 — 2026-05-19
 
 ### ⚠️ Breaking

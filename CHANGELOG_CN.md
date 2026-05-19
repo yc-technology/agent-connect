@@ -9,6 +9,22 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.2.1 — 2026-05-19
+
+### 🐛 修复
+
+- TG 图片清晰度问题：`sendPhoto` 强制压缩到 ~1280px JPEG，截图 / 密集 UI
+  细节看不清。新默认把带图的 `tool_result` 走 `sendDocument`（不压缩、
+  保留原画质、上限 50MB）。现代 TG 客户端依然会显示图片文档的缩略图预览，
+  UX 差别很小，清晰度提升明显。
+
+### 🎛 新环境变量
+
+- `AGENT_CONNECT_IMAGE_AS_DOCUMENT`（默认 `true`）。设为 `false` 回到
+  老的"压缩但有 inline 预览"行为。
+
+---
+
 ## 0.2.0 — 2026-05-19
 
 ### ⚠️ 破坏性变更

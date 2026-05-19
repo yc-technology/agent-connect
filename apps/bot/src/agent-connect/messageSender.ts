@@ -292,6 +292,21 @@ export function isPhotoSupportedMime(mediaType: string | undefined): boolean {
 }
 
 /**
+ * Returns true if `sendPhoto` callers should be redirected to
+ * `sendDocument`. Default behavior (env var unset or `"true"`) prefers
+ * documents — Telegram's photo path compresses, which destroys
+ * legibility on screenshots / dense UI captures. Set the env var to
+ * `"false"` (or any non-`"true"` non-`"1"` value) to opt into the old
+ * compressed-but-inline-preview behavior.
+ */
+function preferDocumentForImages(): boolean {
+  const raw = process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT;
+  if (raw === undefined) return true; // default: preserve quality
+  const v = raw.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+/**
  * Map an image MIME type to a sensible filename. Telegram sniffs file
  * bytes for format detection, but the right extension is what the
  * recipient sees and what gets saved when they tap "save as".
@@ -318,6 +333,19 @@ export async function sendPhoto(
   options: Record<string, unknown> = {}
 ): Promise<void> {
   if (imageData.length === 0) return;
+
+  // Telegram's `sendPhoto` ALWAYS recompresses the image (~1280px JPEG-ish)
+  // which destroys legibility on screenshots — particularly code, terminal
+  // captures, and dense UI. Users overwhelmingly want full quality.
+  // Default `AGENT_CONNECT_IMAGE_AS_DOCUMENT=true` routes everything to
+  // `sendDocument` (no compression, original quality, 50MB cap). Set to
+  // `false` to use the old photo path (inline preview, but compressed).
+  // Modern Telegram clients still show an inline thumbnail for image
+  // documents, so the UX cost is small.
+  if (preferDocumentForImages()) {
+    await sendImagesAsDocuments(api, chatId, imageData, options);
+    return;
+  }
 
   // If ANY image is a format Telegram won't accept as a photo (SVG, TIFF,
   // PDF, etc.), skip sendPhoto/sendMediaGroup entirely and send each as a
