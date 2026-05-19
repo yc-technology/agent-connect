@@ -176,13 +176,29 @@ describe("supervisor", () => {
     );
     await sv.start();
 
-    // Wait long enough for setInterval (50ms) to fire twice and trigger restart.
-    // Within that window, fire c1's exit so the auto-restart's kill phase resolves.
+    // Fire c1's exit when the auto-restart's kill phase asks for it. Use a
+    // setTimeout (not micro-tick) so it lines up with the supervisor's
+    // healthTick → restartServer → killChildGracefully timing.
     setTimeout(() => c1.emit("exit", 0, "SIGTERM"), 130);
-    await new Promise((r) => setTimeout(r, 250));
+
+    // Poll for the persisted restart reason instead of a fixed sleep:
+    //   - `restartCount` flips to ≥1 the instant doRestart() starts
+    //     (in-memory increment before any await).
+    //   - `supervisor.json.lastRestartReason` only appears after
+    //     `await persist()` flushes — which on slow CI Linux can lag
+    //     200ms+ past restartCount turning over. The previous fixed
+    //     250ms wait was enough on local macOS but raced on CI.
+    let info: Awaited<ReturnType<typeof readSupervisorJson>> = null;
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline) {
+      if (sv.restartCount() >= 1) {
+        info = await readSupervisorJson(dir);
+        if (info?.lastRestartReason?.includes("healthz failed")) break;
+      }
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     expect(sv.restartCount()).toBeGreaterThanOrEqual(1);
-    const info = await readSupervisorJson(dir);
     expect(info?.lastRestartReason).toContain("healthz failed");
     await shutdownEmitting(sv, [c2]);
   });
