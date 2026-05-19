@@ -1,6 +1,6 @@
 {
   "name": "@yc-tech/agent-connect-bot",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "type": "module",
   "description": "Agent Connect Telegram bot, hook router, and management API (library + service)",
   "keywords": [
