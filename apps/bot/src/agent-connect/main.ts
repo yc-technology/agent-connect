@@ -23,6 +23,16 @@ async function main(): Promise<void> {
 }
 
 main().catch((error) => {
+  // Top-level fatal. Try to land in the rotating file too — but never let
+  // a logger-init failure mask the real error, so write to stderr first.
   console.error(error);
+  try {
+    // Lazy import so a logger module crash doesn't prevent stderr above.
+    void import("./logger.js").then(({ logger }) =>
+      logger().fatal({ err: error }, "agent-connect fatal — exiting")
+    );
+  } catch {
+    // ignored — stderr already has the error
+  }
   process.exit(1);
 });

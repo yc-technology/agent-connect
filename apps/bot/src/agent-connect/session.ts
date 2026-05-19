@@ -14,6 +14,7 @@ import {
 } from "./codexSessions.js";
 import type { AgentType } from "./claudeCommand.js";
 import type { Config } from "./config.js";
+import { logger } from "./logger.js";
 import { isForumThreadId } from "./telegramThread.js";
 import { TranscriptParser } from "./transcriptParser.js";
 import type { TmuxManager, TmuxWindow } from "./tmuxManager.js";
@@ -627,6 +628,7 @@ export class SessionManager {
       registry.bindThread(userId, threadId, windowId);
     }
     this.saveState();
+    logger().info({ userId, threadId, windowId, windowName }, "session bound: topic ↔ tmux window");
   }
 
   unbindThread(userId: number, threadId: number): string | null {
@@ -638,6 +640,7 @@ export class SessionManager {
     delete this.topicProbeMessageIds[topicKey(userId, threadId)];
     this.options.registry?.unbindThread(userId, threadId);
     this.saveState();
+    logger().info({ userId, threadId, windowId }, "session unbound: topic ↔ tmux window");
     return windowId;
   }
 

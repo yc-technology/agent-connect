@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 import { promisify } from "node:util";
 import { agentLabel, buildAgentCommand } from "./claudeCommand.js";
 import type { Config } from "./config.js";
+import { logger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -141,6 +142,14 @@ export class TmuxManager {
     const result = await this.execTmux(["kill-window", "-t", windowId], {
       rejectOnError: false
     });
+    if (result.code === 0) {
+      logger().info({ windowId, tmuxSession: this.config.tmuxSessionName }, "tmux window killed");
+    } else {
+      logger().warn(
+        { windowId, tmuxSession: this.config.tmuxSessionName, stderr: result.stderr.trim() },
+        "tmux window kill failed"
+      );
+    }
     return result.code === 0;
   }
 
@@ -210,6 +219,17 @@ export class TmuxManager {
 	      }
 	    }
 
+    logger().info(
+      {
+        windowId,
+        windowName: finalWindowName,
+        cwd: path,
+        tmuxSession: this.config.tmuxSessionName,
+        agentType: this.config.agentType,
+        resumeSessionId: options.resumeSessionId ?? null
+      },
+      "tmux window created"
+    );
     return [
       true,
       `Created window '${finalWindowName}' at ${path}`,

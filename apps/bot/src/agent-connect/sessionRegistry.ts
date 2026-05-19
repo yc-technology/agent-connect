@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type { AgentType } from "./hookTypes.js";
+import { logger } from "./logger.js";
 
 export interface WindowRow {
   window_id: string;
@@ -123,7 +124,18 @@ export class SessionRegistry {
 
   deleteWindow(windowId: string): void {
     this.lastEventByWindow.delete(windowId);
-    this.db.prepare("DELETE FROM windows WHERE window_id = ?").run(windowId);
+    // Cascade clears `sessions`, `thread_bindings`, `user_window_offsets`
+    // via FK ON DELETE CASCADE. Snapshot counts before for the log so a
+    // surprise mass-unbind is obvious in the file.
+    const sessionsBefore = (this.db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE window_id = ?").get(windowId) as { n: number }).n;
+    const bindingsBefore = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_bindings WHERE window_id = ?").get(windowId) as { n: number }).n;
+    const result = this.db.prepare("DELETE FROM windows WHERE window_id = ?").run(windowId);
+    if (result.changes > 0) {
+      logger().info(
+        { windowId, sessionsCascadeCleared: sessionsBefore, bindingsCascadeCleared: bindingsBefore },
+        "registry window deleted (FK CASCADE clears sessions + thread_bindings)"
+      );
+    }
   }
 
   recordEvent(windowId: string, event: string, at: number = Date.now()): void {

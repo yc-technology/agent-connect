@@ -47,6 +47,7 @@ import {
   UNBOUND_WINDOWS_KEY
 } from "./directoryBrowser.js";
 import { buildHistoryPage, parseHistoryCallbackData, sendHistory } from "./history.js";
+import { logger as sharedLogger } from "./logger.js";
 import { clearInteractiveMessage, handleInteractiveUi } from "./interactiveUi.js";
 import {
   editTextWithFallback,
@@ -1152,14 +1153,13 @@ export async function setupBotCommands(
 }
 
 export async function setupBotCommandsIfPossible(
-  api: Pick<Bot["api"], "deleteMyCommands" | "setMyCommands">,
-  logger: Pick<Console, "warn"> = console
+  api: Pick<Bot["api"], "deleteMyCommands" | "setMyCommands">
 ): Promise<boolean> {
   try {
     await setupBotCommands(api);
     return true;
   } catch (error) {
-    logger.warn("Failed to setup Telegram command menu; continuing without command menu.", error);
+    sharedLogger().warn({ err: error }, "failed to set up Telegram command menu; continuing without it");
     return false;
   }
 }

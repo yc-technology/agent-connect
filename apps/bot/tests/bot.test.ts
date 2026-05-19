@@ -28,6 +28,7 @@ import {
   usageCommand
 } from "../src/agent-connect/bot.js";
 import { WindowState, type HistoryMessage } from "../src/agent-connect/session.js";
+import { installCaptureLogger } from "./helpers/testLogger.js";
 
 const config = {
   showUserMessages: true,
@@ -562,15 +563,20 @@ describe("bot session commands", () => {
       }),
       setMyCommands: vi.fn(async () => true as const)
     };
-    const logger = { warn: vi.fn() };
+    const log = installCaptureLogger();
 
-    await expect(setupBotCommandsIfPossible(api, logger)).resolves.toBe(false);
+    try {
+      await expect(setupBotCommandsIfPossible(api)).resolves.toBe(false);
 
-    expect(logger.warn).toHaveBeenCalledWith(
-      "Failed to setup Telegram command menu; continuing without command menu.",
-      expect.any(Error)
-    );
-    expect(api.setMyCommands).not.toHaveBeenCalled();
+      const warns = log.at("warn").filter((r) => r.msg.includes("Telegram command menu"));
+      expect(warns.length).toBeGreaterThan(0);
+      // pino's default err serializer expands to { type, message, stack }.
+      const err = warns[0]!.err as { message?: string };
+      expect(err.message).toContain("Not Found");
+      expect(api.setMyCommands).not.toHaveBeenCalled();
+    } finally {
+      log.restore();
+    }
   });
 
   it("replies to unsupported content for authorized users", async () => {

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { logger } from "./logger.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import type { AgentType } from "./hookTypes.js";
 
@@ -136,14 +137,21 @@ export async function migrateJsonToSqliteIfNeeded(
   } catch (error) {
     db.close();
     await rm(dbPath, { force: true });
+    logger().error({ dbPath, err: error }, "legacy JSON → SQLite migration FAILED, dropped partial db");
     throw error;
   }
   db.close();
 
   const stamp = todayStamp();
+  const renamed: string[] = [];
   for (const path of [stateFile, sessionMapFile, monitorStateFile]) {
     if (existsSync(path)) {
       await rename(path, `${path}.migrated-${stamp}`);
+      renamed.push(path);
     }
   }
+  logger().info(
+    { dbPath, renamedJsonFiles: renamed, stamp },
+    "legacy JSON → SQLite migration completed (one-shot)"
+  );
 }
