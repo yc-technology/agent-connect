@@ -4,10 +4,12 @@
 //      web (via files: ["dist"]) and `agc start --daemon` works out of the
 //      box on a fresh install.
 //
-// Sequence is wired in apps/bot/package.json:
-//   build = vite-build-web → THIS → tsc bot
-// so by the time Fastify references dist/web/ at runtime, the files are
-// already in place.
+// Sequence wired in apps/bot/package.json:
+//   build = rm dist → vite-build-web → tsc bot → THIS
+// `tsc` recreates `dist/` after the rm; we copy into the populated dist
+// AFTER tsc so the web files land alongside the compiled JS. At runtime
+// `server.ts` checks `existsSync(<dist>/web/index.html)` and skips static
+// registration if missing (e.g. `pnpm dev:bot` users who didn't build).
 
 import { existsSync, mkdirSync, readdirSync, statSync, copyFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

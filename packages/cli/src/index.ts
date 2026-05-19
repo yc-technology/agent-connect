@@ -61,8 +61,32 @@ async function runHook(argv: string[]): Promise<number> {
  * sets a new process group so SIGTERM to the parent shell doesn't kill
  * the supervisor, and unref-ing the child lets the parent's event loop
  * empty and exit.
+ *
+ * Two early-bail safety checks before we spawn:
+ *   1. If an existing supervisor.json + alive pid says one is already
+ *      running, refuse — `supervisor.ts.start()` would error from the
+ *      detached child but the CLI parent would have already printed
+ *      "started", leaving the user thinking it worked when it didn't.
+ *   2. After spawn, `child.pid === undefined` means spawn failed (node
+ *      binary missing, permission denied, etc). Report and exit non-zero
+ *      instead of printing "started (pid undefined)".
  */
 async function startDaemon(): Promise<number> {
+  const dir = agentConnectDir(process.env);
+  const existing = await readSupervisorJson(dir);
+  if (existing && isPidAlive(existing.supervisorPid)) {
+    process.stderr.write(
+      `agc supervisor already running (pid ${existing.supervisorPid}). ` +
+        `Use \`agc restart\` or \`agc stop\` first.\n`
+    );
+    return 1;
+  }
+  if (existing && !isPidAlive(existing.supervisorPid)) {
+    // Stale supervisor.json from a previous crash — sweep it so the
+    // about-to-spawn supervisor's own startup self-check doesn't trip.
+    await removeSupervisorJson(dir).catch(() => undefined);
+  }
+
   const cliScript = fileURLToPath(import.meta.url);
   const node = process.execPath;
   const child = spawn(node, [cliScript, "supervise"], {
@@ -70,6 +94,10 @@ async function startDaemon(): Promise<number> {
     stdio: "ignore",
     env: process.env
   });
+  if (typeof child.pid !== "number") {
+    process.stderr.write(`failed to spawn supervisor (no pid assigned by OS)\n`);
+    return 1;
+  }
   child.unref();
   process.stdout.write(`agc supervisor started (pid ${child.pid})\n`);
   process.stdout.write(`  logs:    agc logs\n`);
