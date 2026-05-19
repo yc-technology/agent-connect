@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import pino from "pino";
 import type { Config } from "./config.js";
@@ -155,8 +159,30 @@ export async function startServer(
   deps: ServerDeps = {}
 ): Promise<FastifyInstance> {
   const server = createServer(config, state, deps);
+  await registerWebStaticIfPresent(server);
   await server.listen({ host: config.httpHost, port: config.httpPort });
   return server;
+}
+
+/**
+ * Serve the built React console (apps/web/dist, copied into
+ * apps/bot/dist/web/ at build time by scripts/copy-web-dist.mjs) from
+ * the Fastify root. When the bundle isn't present — typical for
+ * `pnpm dev:bot` invocations where vite is serving the web on :5173
+ * separately — skip registration silently; the API still works.
+ */
+async function registerWebStaticIfPresent(server: FastifyInstance): Promise<void> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const webRoot = join(here, "..", "..", "web");
+  if (!existsSync(join(webRoot, "index.html"))) return;
+  await server.register(fastifyStatic, {
+    root: webRoot,
+    prefix: "/",
+    // Let the SPA's index.html handle deep links — Fastify-static returns
+    // index.html for unknown paths under the prefix.
+    wildcard: true
+  });
+  logger().info({ webRoot }, "serving web console statically from bot dist");
 }
 
 function registerManagementRoutes(

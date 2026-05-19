@@ -32,7 +32,7 @@ pnpm dev
 
 `pnpm dev` запускает:
 
-- Bot/API service: `127.0.0.1:8787`
+- Bot/API service: `127.0.0.1:17666` (override via `AGENT_CONNECT_HTTP_PORT`)
 - Web console: `127.0.0.1:5173`
 
 Основные команды:

@@ -99,7 +99,9 @@ export class Config {
     this.openaiApiKey = options.bot?.openaiApiKey ?? env.OPENAI_API_KEY ?? "";
     this.openaiBaseUrl = options.bot?.openaiBaseUrl ?? env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
     this.httpHost = env.AGENT_CONNECT_HTTP_HOST ?? "127.0.0.1";
-    this.httpPort = Number.parseInt(env.AGENT_CONNECT_HTTP_PORT ?? "8787", 10);
+    // 17666 instead of 8787 to avoid clashing with RStudio Server
+    // (which also defaults to 8787). Override via env if you need the old.
+    this.httpPort = Number.parseInt(env.AGENT_CONNECT_HTTP_PORT ?? "17666", 10);
     this.enableTelegram = (env.AGENT_CONNECT_TS_ENABLE_TELEGRAM ?? "true").toLowerCase() !== "false";
     this.enableMonitor =
       this.enableTelegram || (env.AGENT_CONNECT_TS_ENABLE_MONITOR ?? "false").toLowerCase() === "true";

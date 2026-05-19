@@ -30,6 +30,8 @@ pnpm hook:install    # Synchronize Claude and Codex hooks
 - **SQLite per bot** — `bots/<id>/bot.sqlite` holds `windows` / `sessions` / `thread_bindings` / `user_window_offsets`. Window kill cascades to dependent rows via FK.
 - **Message queue per user** — FIFO ordering, message merging, and tool_use/tool_result pairing live in the send queue.
 - **Intermediate messages default off** — Telegram receives a temporary `Thinking...` status and the final answer unless enabled in config.
+- **Daemon mode (optional)** — `agc start --daemon` spawns a detached supervisor (state in `~/.agent-connect/supervisor.json`) that forks the bot service as a child, polls `/healthz` every 10 s, and respawns on failure with exponential backoff. `agc restart` sends SIGUSR2 to the supervisor to reload the on-disk code; `agc stop` SIGTERMs it. Manual `agc start` (foreground) is unchanged.
+- **Default HTTP port 17666** — chosen to avoid RStudio Server's 8787 default. Override with `AGENT_CONNECT_HTTP_PORT`. The bundled web console is served by Fastify at `/` in daemon mode.
 
 ## Configuration
 
@@ -38,6 +40,7 @@ pnpm hook:install    # Synchronize Claude and Codex hooks
 - Bot settings are stored in SQLite at `$AGENT_CONNECT_DIR/agent-connect.sqlite` unless `AGENT_CONNECT_DB_FILE` is set.
 - Runtime state lives in `$AGENT_CONNECT_DIR/bots/<bot-id>/bot.sqlite`; on first launch the legacy `state.json` / `session_map.json` / `monitor_state.json` are imported and renamed `.migrated-YYYY-MM-DD`.
 - Service writes `$AGENT_CONNECT_DIR/runtime.json` (`{httpHost, httpPort, pid}`) at startup so `agc hook` knows where to POST; removed on graceful shutdown. Startup refuses to launch if another listener answers on the recorded port.
+- Daemon mode writes a separate `$AGENT_CONNECT_DIR/supervisor.json` (`{supervisorPid, serverPid, restartCount, lastHealthCheck*, …}`) — `agc status` / `agc stop` / `agc restart` read this. Removed on supervisor SIGTERM.
 
 ## Hook Configuration
 

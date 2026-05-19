@@ -43,6 +43,7 @@
     "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm --filter @yc-tech/agent-connect-bot build && pnpm build"
   },
   "dependencies": {
-    "@yc-tech/agent-connect-bot": "workspace:*"
+    "@yc-tech/agent-connect-bot": "workspace:*",
+    "undici": "^8.3.0"
   }
 }

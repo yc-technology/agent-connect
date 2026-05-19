@@ -30,7 +30,7 @@ pnpm dev
 
 `pnpm dev` 会启动：
 
-- Bot/API 服务：`127.0.0.1:8787`
+- Bot/API 服务：`127.0.0.1:17666`（用 `AGENT_CONNECT_HTTP_PORT` 改）
 - 管理页面：`127.0.0.1:5173`
 
 常用命令：

@@ -32,7 +32,7 @@ pnpm dev
 
 `pnpm dev` starts:
 
-- Fastify API and bot service on `127.0.0.1:8787`
+- Fastify API and bot service on `127.0.0.1:17666` (override with `AGENT_CONNECT_HTTP_PORT`)
 - React management console on `127.0.0.1:5173`
 
 Common commands:
@@ -64,6 +64,31 @@ For npm distribution, publish the workspace packages and install the CLI package
 pnpm -r publish
 npm install -g @yc-tech/agent-connect-cli
 ```
+
+## Daemon Mode
+
+After installing globally, run as a background service supervised with
+auto-restart on crash + healthz failure:
+
+```bash
+agc start --daemon     # spawn detached supervisor + server, return immediately
+agc status             # uptime, restart count, last healthz probe
+agc logs               # tail ~/.agent-connect/logs/current.log
+agc restart            # respawn server child (supervisor stays up)
+agc stop               # graceful shutdown of supervisor + server
+```
+
+The supervisor lives at PID recorded in `~/.agent-connect/supervisor.json`.
+It polls `GET /healthz` every 10 s, triggers a restart after 3 consecutive
+failures, and respawns the server child with exponential backoff
+(1s/2s/5s/10s/30s) on unexpected exit. `agc restart` reloads whatever
+version of the bot is currently on disk — so `npm install -g
+@yc-tech/agent-connect-cli@latest && agc restart` upgrades cleanly without
+manual stop/start.
+
+The web console is served by the bot itself at `http://127.0.0.1:17666/`
+when running in daemon mode (or any production-built bot). During
+`pnpm dev`, the Vite dev server on `:5173` keeps hot reload.
 
 ## Telegram Setup
 

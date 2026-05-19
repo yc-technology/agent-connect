@@ -41,6 +41,18 @@
     "./service": {
       "types": "./dist/src/agent-connect/service.d.ts",
       "default": "./dist/src/agent-connect/service.js"
+    },
+    "./supervisor": {
+      "types": "./dist/src/agent-connect/supervisor.d.ts",
+      "default": "./dist/src/agent-connect/supervisor.js"
+    },
+    "./supervisorJson": {
+      "types": "./dist/src/agent-connect/supervisorJson.d.ts",
+      "default": "./dist/src/agent-connect/supervisorJson.js"
+    },
+    "./utils": {
+      "types": "./dist/src/agent-connect/utils.d.ts",
+      "default": "./dist/src/agent-connect/utils.js"
     }
   },
   "files": [
@@ -55,12 +67,13 @@
     "dev": "tsx src/agent-connect/main.ts",
     "start": "node dist/src/agent-connect/main.js",
     "hook:install": "pnpm build && node dist/src/agent-connect/main.js hook --install",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.build.json",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm --filter @yc-tech/agent-connect-web build && tsc -p tsconfig.build.json && node scripts/copy-web-dist.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:ts": "vitest run",
     "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm build"
   },
   "dependencies": {
+    "@fastify/static": "^9.1.3",
     "@yc-tech/telegramify-markdown": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "dotenv": "^16.4.7",
@@ -69,6 +82,7 @@
     "pino": "^10.3.1",
     "pino-roll": "^4.0.0",
     "sharp": "^0.34.5",
+    "tree-kill": "^1.2.2",
     "undici": "^8.3.0"
   },
   "devDependencies": {
