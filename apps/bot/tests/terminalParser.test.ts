@@ -83,6 +83,22 @@ describe("parseStatusLine", () => {
     expect(isCompletedStatusLine("Reading file")).toBe(false);
   });
 
+  it("identifies multi-unit durations (m / h) on completed status lines", () => {
+    // Claude switches from "Xs" to "Nm Ms" / "Hh Mm" when the step runs
+    // past 1 minute. The seconds-only regex missed all of these and they
+    // showed up in Telegram.
+    expect(isCompletedStatusLine("Worked for 1m 5s")).toBe(true);
+    expect(isCompletedStatusLine("Cooked for 2m 13s")).toBe(true);
+    expect(isCompletedStatusLine("Brewed for 1m")).toBe(true);
+    expect(isCompletedStatusLine("Baked for 1h 30m")).toBe(true);
+    expect(isCompletedStatusLine("Sautéed for 2h 13m 45s")).toBe(true);
+    expect(isCompletedStatusLine("Worked for 1m 5s · 1 shell still running")).toBe(true);
+    // Negative: no unit, or wrong order, or no leading digits.
+    expect(isCompletedStatusLine("Worked for 1m5s")).toBe(false); // tokens require a space
+    expect(isCompletedStatusLine("Worked for m 5s")).toBe(false);
+    expect(isCompletedStatusLine("Worked for 5")).toBe(false); // missing unit
+  });
+
   it("identifies completed status lines with a `· side note` suffix", () => {
     // Claude appends background state after the duration with a middle-dot
     // separator: "Brewed for 34s · 1 shell still running" / "... · 2 shells

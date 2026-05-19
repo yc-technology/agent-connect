@@ -242,12 +242,20 @@ export function parseStatusLine(paneText: string): string | null {
 // Edge cases the regex must cover:
 //   - Accented verbs from Claude's pool: "Sautéed for 17s", "Flambéed for 5s".
 //     Use `\p{L}` (Unicode letter), not `[A-Za-z]`.
+//   - Multi-unit durations over 1 minute: "Worked for 1m 5s",
+//     "Cooked for 2h 13m", "Brewed for 1h 30m 5s". Match one or more
+//     `<digits><unit>` tokens (units s|m|h) separated by spaces.
 //   - Optional middle-dot side note after the duration:
 //     "Brewed for 34s · 1 shell still running" — Claude appends background
 //     state with `· <note>` when relevant. Treat the whole line as completed
 //     so the status clears.
+const DURATION_PART = String.raw`\d+(?:\.\d+)?[smh]`;
+const COMPLETED_STATUS_RE = new RegExp(
+  String.raw`^\p{L}[\p{L} -]*ed for ${DURATION_PART}(?:\s+${DURATION_PART})*(?:\s*·.*)?$`,
+  "u"
+);
 export function isCompletedStatusLine(statusLine: string): boolean {
-  return /^\p{L}[\p{L} -]*ed for \d+(?:\.\d+)?s(?:\s*·.*)?$/u.test(statusLine.trim());
+  return COMPLETED_STATUS_RE.test(statusLine.trim());
 }
 
 export function stripPaneChrome(lines: string[]): string[] {
