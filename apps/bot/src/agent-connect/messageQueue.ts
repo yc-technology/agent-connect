@@ -16,9 +16,21 @@ function previewText(text: string | null | undefined, max = 80): string {
 }
 
 // Minimum spacing between successive status edits on the same (user, thread).
-// 1500ms is comfortably under Telegram's typical edit rate cap and keeps
-// status text reasonably fresh during /compact and similar progress UIs.
-const STATUS_EDIT_THROTTLE_MS = 1500;
+// Default 3000ms (≈ 0.33 edits/sec) — keeps us well under Telegram's edit
+// rate cap during long-running statuses like
+// "Defining protocol types… (8m 3s · ↓ 19k tokens)" where the text ticks
+// every second for many minutes. Override via env for tighter pacing on
+// short-lived UIs (e.g. integration tests / live demos).
+//
+// Read via getter so test code (or live tuning) can change the env var
+// without re-importing the module.
+const DEFAULT_STATUS_EDIT_THROTTLE_MS = 3000;
+function statusEditThrottleMs(): number {
+  const raw = process.env.AGENT_CONNECT_STATUS_THROTTLE_MS;
+  if (raw === undefined) return DEFAULT_STATUS_EDIT_THROTTLE_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_STATUS_EDIT_THROTTLE_MS;
+}
 
 // Max attempts when retrying after a Telegram 429 on a CONTENT send/edit.
 // Content can't be silently dropped on rate limit (unlike status, which
@@ -83,7 +95,7 @@ export class MessageQueueManager {
   // Throttle status edits per (user, thread). Telegram caps editMessageText at
   // roughly 1/sec/chat in steady state; bursts (e.g. /compact progress ticking
   // every second) trigger 429 "Too Many Requests". We skip edits attempted
-  // within STATUS_EDIT_THROTTLE_MS of the last one; statusPolling re-fires
+  // within statusEditThrottleMs() of the last one; statusPolling re-fires
   // every 1s and will eventually deliver the latest text. On 429, the
   // throttle extends to the server-supplied retry_after value.
   private readonly statusEditCooldownUntil = new Map<StatusKey, number>();
@@ -377,7 +389,7 @@ export class MessageQueueManager {
       const edited = await editWithFallback(this.api, chatId, current.messageId, text, sendOptions(threadId));
       if (edited) {
         this.statusMessageInfo.set(key, { messageId: current.messageId, windowId, text });
-        this.statusEditCooldownUntil.set(key, Date.now() + STATUS_EDIT_THROTTLE_MS);
+        this.statusEditCooldownUntil.set(key, Date.now() + statusEditThrottleMs());
       } else {
         this.forgetStatusKey(key);
         await this.sendStatusMessage(userId, tid, windowId, text);

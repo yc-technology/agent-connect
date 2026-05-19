@@ -108,6 +108,9 @@ describe("message queue status handling", () => {
   });
 
   it("throttles consecutive status edits and resumes after cooldown", async () => {
+    // Pin throttle to 1500ms so timing assertions don't drift with the
+    // production default (3000ms).
+    process.env.AGENT_CONNECT_STATUS_THROTTLE_MS = "1500";
     vi.useFakeTimers({ now: 1_000_000 });
     try {
       fake = fakeApi();
@@ -143,6 +146,7 @@ describe("message queue status handling", () => {
       expect(fake.edits).toEqual(["tick 2", "tick 5"]);
     } finally {
       vi.useRealTimers();
+      delete process.env.AGENT_CONNECT_STATUS_THROTTLE_MS;
     }
   });
 

@@ -36,6 +36,12 @@ import { agentConnectDir } from "./utils.js";
  *   - `AGENT_CONNECT_LOG_STDOUT=1` also mirror to stdout (useful during
  *      `pnpm dev:bot` so you can tail in the terminal AND have a file).
  *
+ * Related env (lives in messageQueue, not here, but worth listing
+ * alongside since they're operationally adjacent):
+ *   - `AGENT_CONNECT_STATUS_THROTTLE_MS`  default `3000`. Min spacing
+ *      between consecutive Telegram status edits per (user, thread).
+ *      Lower = snappier status text, higher = safer vs TG rate limit.
+ *
  * Test mode (`NODE_ENV=test` or `VITEST=true`) returns a silent pino so
  * vitest output stays clean. Tests that need to assert on log output
  * should call `setLoggerForTesting(captureLogger)` — see
