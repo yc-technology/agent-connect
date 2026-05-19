@@ -50,6 +50,10 @@
       "types": "./dist/src/agent-connect/supervisorJson.d.ts",
       "default": "./dist/src/agent-connect/supervisorJson.js"
     },
+    "./runtimeJson": {
+      "types": "./dist/src/agent-connect/runtimeJson.d.ts",
+      "default": "./dist/src/agent-connect/runtimeJson.js"
+    },
     "./utils": {
       "types": "./dist/src/agent-connect/utils.d.ts",
       "default": "./dist/src/agent-connect/utils.js"

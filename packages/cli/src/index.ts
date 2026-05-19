@@ -12,6 +12,10 @@ import {
   readSupervisorJson,
   removeSupervisorJson
 } from "@yc-tech/agent-connect-bot/supervisorJson";
+import {
+  readRuntimeJson,
+  removeRuntimeJson
+} from "@yc-tech/agent-connect-bot/runtimeJson";
 import { agentConnectDir } from "@yc-tech/agent-connect-bot/utils";
 import { request } from "undici";
 
@@ -24,7 +28,8 @@ Foreground:
 Daemon (supervised, auto-restart):
   agc start --daemon     Start in the background under a supervisor
   agc start -d           Short for --daemon
-  agc stop               Stop the supervised daemon
+  agc stop               Stop EVERY agc process (daemon + foreground server)
+  agc stop --force       Skip SIGTERM, send SIGKILL immediately
   agc restart            Restart the server child (supervisor stays up)
   agc status             Show daemon status + last health check
   agc logs               Tail \`current.log\` (Ctrl+C to stop)
@@ -88,39 +93,117 @@ async function runSuperviseSubcommand(): Promise<number> {
   return 0;
 }
 
-async function stopDaemon(): Promise<number> {
+/**
+ * Stop every agc process the CLI knows about:
+ *   1. supervisor (if supervisor.json present + pid alive)
+ *   2. server child the supervisor is currently running (from supervisor.json)
+ *   3. orphaned server from a non-daemon `agc start` (from runtime.json) —
+ *      covered separately so foreground users get a working `agc stop` too
+ *
+ * Strategy:
+ *   - SIGTERM all known pids first (lets each run its graceful handler:
+ *     supervisor cleans up child + supervisor.json; service.ts cleans up
+ *     bots + runtime.json).
+ *   - Poll for up to 10s for them to exit.
+ *   - Anything still alive → escalate to SIGKILL.
+ *   - Always sweep both json files at the end so a half-dead state from
+ *     a prior crash gets cleared.
+ *
+ * `--force`: skip SIGTERM, go straight to SIGKILL. Use when SIGTERM
+ * graceful path is itself broken.
+ */
+async function stopAll(force: boolean): Promise<number> {
   const dir = agentConnectDir(process.env);
-  const info = await readSupervisorJson(dir);
-  if (!info) {
-    process.stderr.write(`no supervisor.json at ${dir} — is the daemon running?\n`);
-    return 1;
+  const supervisor = await readSupervisorJson(dir);
+  const runtime = await readRuntimeJson(dir);
+
+  type Target = { name: string; pid: number };
+  const targets: Target[] = [];
+  if (supervisor && isPidAlive(supervisor.supervisorPid)) {
+    targets.push({ name: "supervisor", pid: supervisor.supervisorPid });
   }
-  if (!isPidAlive(info.supervisorPid)) {
-    process.stderr.write(
-      `supervisor pid ${info.supervisorPid} is not alive — clearing stale supervisor.json\n`
-    );
-    await removeSupervisorJson(dir);
-    return 1;
+  if (supervisor?.serverPid && isPidAlive(supervisor.serverPid)) {
+    targets.push({ name: "server (under supervisor)", pid: supervisor.serverPid });
   }
-  try {
-    process.kill(info.supervisorPid, "SIGTERM");
-  } catch (err) {
-    process.stderr.write(
-      `failed to signal supervisor pid ${info.supervisorPid}: ${err instanceof Error ? err.message : String(err)}\n`
-    );
-    return 1;
+  if (
+    runtime &&
+    isPidAlive(runtime.pid) &&
+    !targets.some((t) => t.pid === runtime.pid)
+  ) {
+    // Foreground `agc start` (no daemon). Its own pid lives in runtime.json.
+    targets.push({ name: "server (foreground)", pid: runtime.pid });
   }
-  process.stdout.write(`stopping supervisor pid ${info.supervisorPid}…\n`);
-  // Best-effort wait so the user sees a confirmed clean exit.
+
+  if (targets.length === 0) {
+    process.stdout.write(`no agc processes detected as running\n`);
+    await sweepStaleJson(dir);
+    return 0;
+  }
+
+  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
+  for (const t of targets) {
+    try {
+      process.kill(t.pid, signal);
+      process.stdout.write(`signaled ${t.name} pid ${t.pid} with ${signal}\n`);
+    } catch (err) {
+      process.stderr.write(
+        `failed to signal ${t.name} pid ${t.pid}: ${err instanceof Error ? err.message : String(err)}\n`
+      );
+    }
+  }
+
+  if (force) {
+    // SIGKILL is immediate; no graceful handlers will run, so just sweep
+    // the json files and report.
+    await sleep(200); // give the kernel a tick to actually reap
+    await sweepStaleJson(dir);
+    const stillAlive = targets.filter((t) => isPidAlive(t.pid));
+    if (stillAlive.length > 0) {
+      process.stderr.write(
+        `${stillAlive.length} process(es) still alive after SIGKILL — odd; check permissions\n`
+      );
+      return 1;
+    }
+    process.stdout.write(`stopped.\n`);
+    return 0;
+  }
+
+  // Graceful path: poll up to 10s, then escalate to SIGKILL.
   for (let i = 0; i < 50; i += 1) {
-    if (!isPidAlive(info.supervisorPid)) {
+    const alive = targets.filter((t) => isPidAlive(t.pid));
+    if (alive.length === 0) {
       process.stdout.write(`stopped.\n`);
+      await sweepStaleJson(dir);
       return 0;
     }
     await sleep(200);
   }
-  process.stdout.write(`supervisor still alive after 10s; check \`ps -p ${info.supervisorPid}\`\n`);
-  return 1;
+
+  const stillAlive = targets.filter((t) => isPidAlive(t.pid));
+  for (const t of stillAlive) {
+    process.stdout.write(`escalating ${t.name} pid ${t.pid} to SIGKILL\n`);
+    try {
+      process.kill(t.pid, "SIGKILL");
+    } catch {
+      // ignore — pid might have died between check and kill
+    }
+  }
+  await sleep(200);
+  await sweepStaleJson(dir);
+  const remaining = targets.filter((t) => isPidAlive(t.pid));
+  if (remaining.length > 0) {
+    process.stderr.write(
+      `${remaining.length} process(es) STILL alive after SIGKILL — manual cleanup needed (\`ps\` / \`kill -9\`)\n`
+    );
+    return 1;
+  }
+  process.stdout.write(`stopped (some processes required SIGKILL escalation).\n`);
+  return 0;
+}
+
+async function sweepStaleJson(dir: string): Promise<void> {
+  // Always best-effort — files might already be gone.
+  await Promise.allSettled([removeSupervisorJson(dir), removeRuntimeJson(dir)]);
 }
 
 async function restartDaemon(): Promise<number> {
@@ -288,7 +371,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   if (command === "supervise") return runSuperviseSubcommand();
-  if (command === "stop") return stopDaemon();
+  if (command === "stop") {
+    const force = argv.slice(1).includes("--force") || argv.slice(1).includes("-f");
+    return stopAll(force);
+  }
   if (command === "restart") return restartDaemon();
   if (command === "status") return showStatus();
   if (command === "logs") return tailLogs();
