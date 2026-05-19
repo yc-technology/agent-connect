@@ -86,7 +86,7 @@ describe("messageSender", () => {
     );
   });
 
-  it("sends one photo or a media group", async () => {
+  it("sends one photo or a media group with mediaType-derived filenames", async () => {
     const api: TelegramApiLike = {
       sendMessage: vi.fn(),
       sendPhoto: vi.fn(),
@@ -94,19 +94,125 @@ describe("messageSender", () => {
     };
 
     await sendPhoto(api, 100, [{ mediaType: "image/png", data: Buffer.from("one") }]);
-    expect(api.sendPhoto).toHaveBeenCalledWith(100, Buffer.from("one"), {});
+    expect(api.sendPhoto).toHaveBeenCalledWith(100, Buffer.from("one"), {
+      filename: "screenshot.png"
+    });
+
+    await sendPhoto(api, 100, [{ mediaType: "image/jpeg", data: Buffer.from("jpg") }]);
+    expect(api.sendPhoto).toHaveBeenLastCalledWith(100, Buffer.from("jpg"), {
+      filename: "screenshot.jpg"
+    });
 
     await sendPhoto(api, 100, [
       { mediaType: "image/png", data: Buffer.from("one") },
-      { mediaType: "image/png", data: Buffer.from("two") }
+      { mediaType: "image/webp", data: Buffer.from("two") }
     ]);
     expect(api.sendMediaGroup).toHaveBeenCalledWith(
       100,
       [
-        { type: "photo", media: Buffer.from("one") },
-        { type: "photo", media: Buffer.from("two") }
+        { type: "photo", media: Buffer.from("one"), _filename: "screenshot.png" },
+        { type: "photo", media: Buffer.from("two"), _filename: "screenshot-2.webp" }
       ],
       {}
     );
+  });
+
+  it("falls back to sendDocument when sendPhoto throws a non-rate-limit error", async () => {
+    // PHOTO_INVALID_DIMENSIONS / 413 too-large → photo path rejects.
+    // Document path should be tried with the same caption + filename.
+    const photoErr = new Error("Bad Request: PHOTO_INVALID_DIMENSIONS");
+    const api: TelegramApiLike = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(async () => {
+        throw photoErr;
+      }),
+      sendDocument: vi.fn()
+    };
+
+    await sendPhoto(
+      api,
+      100,
+      [{ mediaType: "image/png", data: Buffer.from("hi") }],
+      { caption: "📷 Screenshot", message_thread_id: 42 }
+    );
+
+    expect(api.sendPhoto).toHaveBeenCalledTimes(1);
+    expect(api.sendDocument).toHaveBeenCalledWith(
+      100,
+      Buffer.from("hi"),
+      {
+        caption: "📷 Screenshot",
+        message_thread_id: 42,
+        filename: "screenshot.png"
+      }
+    );
+  });
+
+  it("media-group fallback to sendDocument lifts caption onto the first document only", async () => {
+    const api: TelegramApiLike = {
+      sendMessage: vi.fn(),
+      sendMediaGroup: vi.fn(async () => {
+        throw new Error("Bad Request: MEDIA_INVALID");
+      }),
+      sendDocument: vi.fn()
+    };
+
+    await sendPhoto(
+      api,
+      100,
+      [
+        { mediaType: "image/png", data: Buffer.from("a") },
+        { mediaType: "image/jpeg", data: Buffer.from("b") }
+      ],
+      { caption: "two shots" }
+    );
+
+    expect(api.sendDocument).toHaveBeenCalledTimes(2);
+    expect(api.sendDocument).toHaveBeenNthCalledWith(1, 100, Buffer.from("a"), {
+      filename: "screenshot.png",
+      caption: "two shots"
+    });
+    // Second doc: NO caption (Telegram media-group semantics: caption only
+    // on the first item).
+    expect(api.sendDocument).toHaveBeenNthCalledWith(2, 100, Buffer.from("b"), {
+      filename: "screenshot-2.jpg"
+    });
+  });
+
+  it("propagates retry-after instead of falling back to sendDocument on 429", async () => {
+    const api: TelegramApiLike = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(async () => {
+        const err = Object.assign(new Error("429"), { parameters: { retry_after: 3 } });
+        throw err;
+      }),
+      sendDocument: vi.fn()
+    };
+
+    await expect(
+      sendPhoto(api, 100, [{ mediaType: "image/png", data: Buffer.from("x") }])
+    ).rejects.toMatchObject({ parameters: { retry_after: 3 } });
+    expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("routes Telegram-unsupported MIME types straight to sendDocument", async () => {
+    // image/svg+xml is vector — Telegram's sendPhoto would reject it.
+    // image/pdf and image/tiff likewise. Skip the doomed photo attempt.
+    const api: TelegramApiLike = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(),
+      sendDocument: vi.fn()
+    };
+
+    await sendPhoto(api, 100, [{ mediaType: "image/svg+xml", data: Buffer.from("<svg/>") }]);
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+    expect(api.sendDocument).toHaveBeenCalledWith(100, Buffer.from("<svg/>"), {
+      filename: "screenshot.svg"
+    });
+
+    await sendPhoto(api, 100, [{ mediaType: "application/pdf", data: Buffer.from("%PDF") }]);
+    expect(api.sendDocument).toHaveBeenLastCalledWith(100, Buffer.from("%PDF"), {
+      filename: "screenshot.pdf"
+    });
   });
 });
