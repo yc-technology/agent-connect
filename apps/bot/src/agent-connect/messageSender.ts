@@ -35,7 +35,13 @@ export interface TelegramApiLike {
   ): Promise<unknown>;
   sendMediaGroup?(
     chatId: number,
-    media: Array<{ type: "photo"; media: Buffer }>,
+    // `_filename` is an internal channel field (underscore-prefixed to mark
+    // it as not part of Telegram's wire shape). The grammY adapter reads
+    // it to set the InputFile filename per item; downstream Telegram
+    // sniffs bytes for actual format detection.
+    // `caption` belongs only on the FIRST item per Telegram's group
+    // caption semantics; the caller is responsible for placement.
+    media: Array<{ type: "photo"; media: Buffer; _filename?: string; caption?: string }>,
     options?: Record<string, unknown>
   ): Promise<unknown>;
   /**
@@ -62,15 +68,24 @@ export interface EditTextTargetLike {
   editMessageText(text: string, options?: Record<string, unknown>): Promise<unknown>;
 }
 
-export function telegramApiFromGrammy(bot: Pick<Bot, "api">): TelegramApiLike {
-  const popFilename = (opts: Record<string, unknown> | undefined, fallback: string): { filename: string; rest: Record<string, unknown> } => {
-    if (!opts) return { filename: fallback, rest: {} };
-    const { filename: f, ...rest } = opts;
-    return {
-      filename: typeof f === "string" && f.length > 0 ? f : fallback,
-      rest
-    };
+/**
+ * Pop `filename` out of an options bag (returning it separately from the
+ * rest) so the grammY adapter can hand it to `InputFile` without leaking
+ * the internal channel field back into the wire payload.
+ */
+function popFilename(
+  opts: Record<string, unknown> | undefined,
+  fallback: string
+): { filename: string; rest: Record<string, unknown> } {
+  if (!opts) return { filename: fallback, rest: {} };
+  const { filename: f, ...rest } = opts;
+  return {
+    filename: typeof f === "string" && f.length > 0 ? f : fallback,
+    rest
   };
+}
+
+export function telegramApiFromGrammy(bot: Pick<Bot, "api">): TelegramApiLike {
   return {
     sendMessage: async (chatId, text, options) => bot.api.sendMessage(chatId, text, options),
     editMessageText: async (chatId, messageId, text, options) =>
@@ -81,16 +96,19 @@ export function telegramApiFromGrammy(bot: Pick<Bot, "api">): TelegramApiLike {
       return bot.api.sendPhoto(chatId, new InputFile(photo, filename), rest);
     },
     sendMediaGroup: async (chatId, media, options) => {
-      // Media-item filenames may live on each item via `_filename`; the
-      // caller uses an underscore prefix to mark internal channel fields
-      // since the public `InputMediaPhoto` shape doesn't carry filename.
+      // Per-item filename comes via `_filename` (now typed on the
+      // TelegramApiLike.sendMediaGroup item shape, so no cast needed).
       const items = media.map((item, index) => {
-        const withFilename = item as unknown as { _filename?: string };
         const fname =
-          typeof withFilename._filename === "string" && withFilename._filename.length > 0
-            ? withFilename._filename
+          typeof item._filename === "string" && item._filename.length > 0
+            ? item._filename
             : `photo-${index + 1}.png`;
-        return { type: "photo" as const, media: new InputFile(item.media, fname) };
+        const wire: { type: "photo"; media: InputFile; caption?: string } = {
+          type: "photo",
+          media: new InputFile(item.media, fname)
+        };
+        if (typeof item.caption === "string") wire.caption = item.caption;
+        return wire;
       });
       return bot.api.sendMediaGroup(chatId, items, options);
     },
