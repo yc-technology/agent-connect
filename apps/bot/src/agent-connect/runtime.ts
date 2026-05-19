@@ -26,8 +26,15 @@ export async function handleNewMessage(msg: NewMessage, deps: RuntimeDeps): Prom
   const activeUsers = deps.sessionManager.findUsersForWindow(msg.windowId);
   if (activeUsers.length === 0) return;
 
+  // Image-bearing tool_results bypass the suppression gate: even when
+  // showToolCalls=false (default), users explicitly want to see screenshots
+  // / Claude's image output in Telegram. Text-only tool_use / tool_result /
+  // thinking / local_command still collapse to a "Thinking…" status to
+  // avoid spamming the chat with every Read/Bash invocation.
+  const hasImage = !!(msg.imageData && msg.imageData.length > 0);
+
   for (const [userId, windowId, threadId] of activeUsers) {
-    if (!deps.config.showToolCalls && isIntermediateContent(msg.contentType)) {
+    if (!deps.config.showToolCalls && isIntermediateContent(msg.contentType) && !hasImage) {
       deps.messageQueue.enqueueStatusUpdate(userId, windowId, THINKING_STATUS_TEXT, threadId);
       await deps.messageQueue.drain(userId);
       continue;
@@ -39,7 +46,16 @@ export async function handleNewMessage(msg: NewMessage, deps: RuntimeDeps): Prom
     if (!deps.config.showToolCalls && msg.role === "assistant" && msg.contentType === "text") {
       deps.messageQueue.enqueueStatusUpdate(userId, windowId, null, threadId);
     }
-    deps.messageQueue.enqueueContentMessage(userId, windowId, parts, {
+    // When the only thing we want to surface is the image (text-suppressed
+    // tool_result), substitute a compact caption for `parts` so Telegram
+    // gets a captioned photo instead of a naked one. Falls back to the
+    // tool name (or a generic camera) when no summary is available.
+    const useImageOnlyCaption =
+      hasImage && !deps.config.showToolCalls && isIntermediateContent(msg.contentType);
+    const sendParts = useImageOnlyCaption
+      ? [imageCaption(msg.toolName ?? null, msg.text)]
+      : parts;
+    deps.messageQueue.enqueueContentMessage(userId, windowId, sendParts, {
       toolUseId: msg.toolUseId ?? null,
       contentType: msg.contentType,
       role: msg.role,
@@ -63,4 +79,14 @@ export async function handleNewMessage(msg: NewMessage, deps: RuntimeDeps): Prom
 
 function isIntermediateContent(contentType: string): boolean {
   return INTERMEDIATE_CONTENT_TYPES.has(contentType);
+}
+
+function imageCaption(toolName: string | null, text: string): string {
+  // tool_result text often duplicates "[Image]" sentinels or is empty —
+  // prefer the tool name when present. Telegram caption is bounded at
+  // 1024 chars so a short, fixed prefix is fine.
+  if (toolName && toolName.trim()) return `📷 ${toolName.trim()}`;
+  const cleaned = text?.trim();
+  if (cleaned && cleaned.length <= 200) return `📷 ${cleaned}`;
+  return "📷";
 }

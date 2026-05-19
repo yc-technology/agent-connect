@@ -312,6 +312,25 @@ export class MessageQueueManager {
       }
     }
 
+    // Image-bearing tool_result that has no parent tool_use message visible
+    // in Telegram (the common case when showToolCalls=false): send a single
+    // captioned photo so the user gets "📷 <ToolName>" + image as ONE
+    // message instead of a bare text + bare photo split. The text-loop
+    // path below would also work but produces two messages.
+    if (
+      task.contentType === "tool_result" &&
+      task.imageData?.length &&
+      task.parts.length <= 1
+    ) {
+      await this.clearStatusMessage(userId, tid);
+      const caption = (task.parts[0] ?? "").slice(0, 1024);
+      const opts = caption
+        ? { ...sendOptions(threadId), caption }
+        : sendOptions(threadId);
+      await withRetryAfter(() => sendPhoto(this.api, chatId, task.imageData!, opts));
+      return;
+    }
+
     let firstPart = true;
     let lastMessageId: number | null = null;
     for (const part of task.parts) {

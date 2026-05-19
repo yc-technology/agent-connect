@@ -348,6 +348,48 @@ describe("message queue tool handling", () => {
     expect(fake.photos).toEqual([Buffer.from("png")]);
   });
 
+  it("tool_result with image sends a single captioned photo (no separate text msg)", async () => {
+    // Common case when showToolCalls=false: Claude's screenshot tool fires
+    // a tool_result with imageData and a short caption ("📷 Screenshot").
+    // Should be ONE captioned photo, NOT a text msg + bare photo.
+    fake = fakeApi();
+    const captionCapture: Array<string | undefined> = [];
+    fake.sendPhoto = vi.fn(async (_chatId, _photo, options) => {
+      captionCapture.push((options as { caption?: string })?.caption);
+    }) as NonNullable<TelegramApiLike["sendPhoto"]>;
+
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["📷 Screenshot"], {
+      contentType: "tool_result",
+      toolUseId: "tu-1",
+      imageData: [{ mediaType: "image/png", data: Buffer.from("png") }]
+    });
+
+    await manager.drain(100);
+
+    expect(fake.messages).toEqual([]); // no separate text message
+    expect(captionCapture).toEqual(["📷 Screenshot"]);
+    expect(fake.sendPhoto).toHaveBeenCalledTimes(1);
+  });
+
+  it("tool_result with image but parts > 1 falls back to text-loop + bare photo", async () => {
+    // Defensive: if upstream ever sends multi-part text alongside imageData
+    // (unusual), don't try to cram it into a 1024-char caption — use the
+    // existing text-loop path so nothing gets dropped.
+    fake = fakeApi();
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["part one", "part two"], {
+      contentType: "tool_result",
+      toolUseId: "tu-2",
+      imageData: [{ mediaType: "image/png", data: Buffer.from("png") }]
+    });
+
+    await manager.drain(100);
+
+    expect(fake.messages).toEqual(["part one", "part two"]);
+    expect(fake.photos).toEqual([Buffer.from("png")]);
+  });
+
   it("clears tool ids for a topic", async () => {
     fake = fakeApi();
     const manager = queue();

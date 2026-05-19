@@ -202,14 +202,25 @@ export async function sendPhoto(
 
   try {
     if (imageData.length === 1) {
+      // For a single photo, `caption` lives directly on the send options.
+      // Telegram caps captions at 1024 chars; we let the caller bound it.
       await api.sendPhoto?.(chatId, imageData[0]!.data, options);
       return;
     }
 
+    // For a media group, Telegram only honors `caption` when it's on the
+    // FIRST media item (the group caption). If the caller passed `caption`
+    // via options, lift it onto media[0] and strip it from the outer call.
+    const caption = typeof options.caption === "string" ? options.caption : null;
+    const { caption: _stripped, ...groupOptions } = options;
     await api.sendMediaGroup?.(
       chatId,
-      imageData.map((image) => ({ type: "photo" as const, media: image.data })),
-      options
+      imageData.map((image, idx) => ({
+        type: "photo" as const,
+        media: image.data,
+        ...(idx === 0 && caption ? { caption } : {})
+      })),
+      groupOptions
     );
   } catch (error) {
     if (isRetryAfter(error)) throw error;
