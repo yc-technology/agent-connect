@@ -28,7 +28,11 @@ Foreground:
 Daemon (supervised, auto-restart):
   agc start --daemon     Start in the background under a supervisor
   agc start -d           Short for --daemon
-  agc stop               Stop EVERY agc process (daemon + foreground server)
+  agc stop               Stop the daemon (or foreground server if no daemon)
+                         Never touches an unrelated process — see --all
+  agc stop --all         ALSO kill runtime.json's pid even if it's not the
+                         supervisor's server child (e.g. a foreground bot
+                         running in parallel during a transition)
   agc stop --force       Skip SIGTERM, send SIGKILL immediately
   agc restart            Restart the server child (supervisor stays up)
   agc status             Show daemon status + last health check
@@ -122,53 +126,101 @@ async function runSuperviseSubcommand(): Promise<number> {
 }
 
 /**
- * Stop every agc process the CLI knows about:
- *   1. supervisor (if supervisor.json present + pid alive)
- *   2. server child the supervisor is currently running (from supervisor.json)
- *   3. orphaned server from a non-daemon `agc start` (from runtime.json) —
- *      covered separately so foreground users get a working `agc stop` too
+ * Stop the agc processes WE manage:
  *
- * Strategy:
- *   - SIGTERM all known pids first (lets each run its graceful handler:
- *     supervisor cleans up child + supervisor.json; service.ts cleans up
- *     bots + runtime.json).
- *   - Poll for up to 10s for them to exit.
- *   - Anything still alive → escalate to SIGKILL.
- *   - Always sweep both json files at the end so a half-dead state from
- *     a prior crash gets cleared.
+ *   1. If supervisor.json + alive pid → SIGTERM the supervisor (its own
+ *      shutdown handler kills the server child + cleans up json files).
+ *   2. Otherwise if supervisor.json is stale → sweep it; treat as "no
+ *      daemon".
+ *   3. Then for runtime.json's pid: ONLY signal it when it's clearly
+ *      ours, i.e. either
+ *         (a) no live supervisor (the bot must be foreground), OR
+ *         (b) --all was passed explicitly.
+ *      If a live supervisor exists AND runtime.pid !== supervisor.serverPid,
+ *      that runtime.json belongs to SOMEONE ELSE (typically a foreground
+ *      bot the user started independently). Leaving it alone is what
+ *      saved us from the May-19 "smoke test killed the foreground bot"
+ *      incident — the previous version's "kill everything in runtime.json"
+ *      took out an unrelated process.
  *
- * `--force`: skip SIGTERM, go straight to SIGKILL. Use when SIGTERM
- * graceful path is itself broken.
+ * Flags:
+ *   --force   skip SIGTERM, go straight to SIGKILL.
+ *   --all     ALSO signal runtime.json's pid even when a supervisor is
+ *             managing a different server (i.e. "actually nuke any agc
+ *             process in this config dir").
+ *
+ * Json sweep is now scoped: only files we successfully killed get
+ * removed. supervisor.json gets swept if we killed the supervisor (or it
+ * was stale). runtime.json gets swept only if we killed its pid.
  */
-async function stopAll(force: boolean): Promise<number> {
+async function stopAll(opts: { force: boolean; all: boolean }): Promise<number> {
   const dir = agentConnectDir(process.env);
   const supervisor = await readSupervisorJson(dir);
   const runtime = await readRuntimeJson(dir);
 
-  type Target = { name: string; pid: number };
+  type Target = { name: string; pid: number; ownsSupervisorJson?: boolean; ownsRuntimeJson?: boolean };
   const targets: Target[] = [];
-  if (supervisor && isPidAlive(supervisor.supervisorPid)) {
-    targets.push({ name: "supervisor", pid: supervisor.supervisorPid });
+
+  let supervisorAlive = false;
+  if (supervisor) {
+    if (isPidAlive(supervisor.supervisorPid)) {
+      supervisorAlive = true;
+      targets.push({
+        name: "supervisor",
+        pid: supervisor.supervisorPid,
+        ownsSupervisorJson: true,
+        // Supervisor's graceful shutdown kills the server child too, so
+        // the supervisor's serverPid (== probably runtime.pid) goes with it.
+        ownsRuntimeJson: supervisor.serverPid === runtime?.pid
+      });
+    } else {
+      // Stale supervisor.json from a previous crash — sweep + report.
+      await removeSupervisorJson(dir).catch(() => undefined);
+      process.stderr.write(
+        `cleared stale supervisor.json (pid ${supervisor.supervisorPid} was dead)\n`
+      );
+    }
   }
-  if (supervisor?.serverPid && isPidAlive(supervisor.serverPid)) {
-    targets.push({ name: "server (under supervisor)", pid: supervisor.serverPid });
-  }
-  if (
-    runtime &&
-    isPidAlive(runtime.pid) &&
-    !targets.some((t) => t.pid === runtime.pid)
-  ) {
-    // Foreground `agc start` (no daemon). Its own pid lives in runtime.json.
-    targets.push({ name: "server (foreground)", pid: runtime.pid });
+
+  if (runtime && isPidAlive(runtime.pid) && !targets.some((t) => t.pid === runtime.pid)) {
+    const ownedByLiveSupervisor =
+      supervisorAlive && supervisor!.serverPid === runtime.pid;
+    if (ownedByLiveSupervisor) {
+      // Already covered transitively by the supervisor target above; no
+      // need to add it separately.
+    } else if (!supervisorAlive) {
+      // No supervisor managing this dir → runtime.json is the foreground
+      // server's. Stop it.
+      targets.push({
+        name: "foreground server",
+        pid: runtime.pid,
+        ownsRuntimeJson: true
+      });
+    } else if (opts.all) {
+      // Live supervisor but runtime.pid is unrelated. User explicitly
+      // asked --all → also stop it.
+      targets.push({
+        name: "unrelated server (runtime.json mismatch)",
+        pid: runtime.pid,
+        ownsRuntimeJson: true
+      });
+    } else {
+      // Live supervisor + unrelated runtime.pid + no --all → leave it
+      // alone, but TELL the user it's there.
+      process.stderr.write(
+        `note: runtime.json points to pid ${runtime.pid}, which is NOT supervisor.serverPid ${supervisor!.serverPid}. ` +
+          `Looks like a foreground bot started independently — skipping. ` +
+          `Pass \`--all\` to stop it too.\n`
+      );
+    }
   }
 
   if (targets.length === 0) {
-    process.stdout.write(`no agc processes detected as running\n`);
-    await sweepStaleJson(dir);
+    process.stdout.write(`no managed agc processes detected as running\n`);
     return 0;
   }
 
-  const signal: NodeJS.Signals = force ? "SIGKILL" : "SIGTERM";
+  const signal: NodeJS.Signals = opts.force ? "SIGKILL" : "SIGTERM";
   for (const t of targets) {
     try {
       process.kill(t.pid, signal);
@@ -180,11 +232,16 @@ async function stopAll(force: boolean): Promise<number> {
     }
   }
 
-  if (force) {
-    // SIGKILL is immediate; no graceful handlers will run, so just sweep
-    // the json files and report.
+  const sweep = async (): Promise<void> => {
+    const ops: Promise<unknown>[] = [];
+    if (targets.some((t) => t.ownsSupervisorJson)) ops.push(removeSupervisorJson(dir));
+    if (targets.some((t) => t.ownsRuntimeJson)) ops.push(removeRuntimeJson(dir));
+    await Promise.allSettled(ops);
+  };
+
+  if (opts.force) {
     await sleep(200); // give the kernel a tick to actually reap
-    await sweepStaleJson(dir);
+    await sweep();
     const stillAlive = targets.filter((t) => isPidAlive(t.pid));
     if (stillAlive.length > 0) {
       process.stderr.write(
@@ -196,12 +253,11 @@ async function stopAll(force: boolean): Promise<number> {
     return 0;
   }
 
-  // Graceful path: poll up to 10s, then escalate to SIGKILL.
+  // Graceful: poll up to 10s for SIGTERM to take effect, then escalate.
   for (let i = 0; i < 50; i += 1) {
-    const alive = targets.filter((t) => isPidAlive(t.pid));
-    if (alive.length === 0) {
+    if (targets.every((t) => !isPidAlive(t.pid))) {
       process.stdout.write(`stopped.\n`);
-      await sweepStaleJson(dir);
+      await sweep();
       return 0;
     }
     await sleep(200);
@@ -217,7 +273,7 @@ async function stopAll(force: boolean): Promise<number> {
     }
   }
   await sleep(200);
-  await sweepStaleJson(dir);
+  await sweep();
   const remaining = targets.filter((t) => isPidAlive(t.pid));
   if (remaining.length > 0) {
     process.stderr.write(
@@ -227,11 +283,6 @@ async function stopAll(force: boolean): Promise<number> {
   }
   process.stdout.write(`stopped (some processes required SIGKILL escalation).\n`);
   return 0;
-}
-
-async function sweepStaleJson(dir: string): Promise<void> {
-  // Always best-effort — files might already be gone.
-  await Promise.allSettled([removeSupervisorJson(dir), removeRuntimeJson(dir)]);
 }
 
 async function restartDaemon(): Promise<number> {
@@ -400,8 +451,10 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (command === "supervise") return runSuperviseSubcommand();
   if (command === "stop") {
-    const force = argv.slice(1).includes("--force") || argv.slice(1).includes("-f");
-    return stopAll(force);
+    const rest = argv.slice(1);
+    const force = rest.includes("--force") || rest.includes("-f");
+    const all = rest.includes("--all") || rest.includes("-a");
+    return stopAll({ force, all });
   }
   if (command === "restart") return restartDaemon();
   if (command === "status") return showStatus();
