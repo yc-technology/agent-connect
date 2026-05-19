@@ -6,11 +6,29 @@ import { agentConnectDir } from "./utils.js";
 /**
  * Shared structured logger for the bot service.
  *
- * Default destination: `$AGENT_CONNECT_DIR/logs/agent-connect.log` with
- * daily rotation via `pino-roll`. Old days are kept as
- * `agent-connect.log.YYYY-MM-DD`. A 50 MB size cap also triggers rotation
- * within a single day so a runaway loop can't fill the disk before
- * midnight.
+ * Destination: `$AGENT_CONNECT_DIR/logs/` — pino-roll names each rotated
+ * file `agent-connect.<YYYY-MM-DD>.<N>.log` (`N` is the rotation counter
+ * within that day; starts at 1 each midnight, increments on size cap):
+ *
+ *     ~/.agent-connect/logs/
+ *       current.log                          → symlink → active file
+ *       agent-connect.2026-05-19.1.log       (today)
+ *       agent-connect.2026-05-18.1.log       (yesterday)
+ *       agent-connect.2026-05-17.2.log       (older — was rotated mid-day)
+ *
+ * Rotation triggers:
+ *   - frequency: `daily` → fresh file at local-midnight
+ *   - size: `50m`        → fresh file mid-day if the active one fills up
+ *                          (guardrail against a runaway loop pre-midnight)
+ *
+ * Retention: `limit.count: 30` keeps the 30 most recent rotated files in
+ * addition to the active one (~30 days under normal cadence; more days if
+ * size triggers are rare, fewer if size triggers run hot).
+ *
+ * Tail-the-current-file: `tail -f ~/.agent-connect/logs/current.log` —
+ * the `symlink: true` option keeps `current.log` pointing at whatever
+ * `agent-connect.<date>.<N>.log` is currently being written, so the same
+ * tail command keeps working across a rotation.
  *
  * Env knobs:
  *   - `AGENT_CONNECT_LOG_LEVEL`  default `info`. One of pino's
@@ -62,7 +80,13 @@ function buildLogger(): Logger {
         frequency: "daily",
         dateFormat: "yyyy-MM-dd",
         mkdir: true,
-        size: "50m"
+        size: "50m",
+        // `current.log` symlink → active file. Survives rotations so
+        // `tail -f current.log` keeps working.
+        symlink: true,
+        // Retention: keep 30 rotated files + the active one. Bounds disk
+        // usage at ~30 × 50 MB = 1.5 GB worst case.
+        limit: { count: 30 }
       }
     }
   ];
