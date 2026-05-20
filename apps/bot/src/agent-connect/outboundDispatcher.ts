@@ -66,8 +66,12 @@ export interface SendFileResult {
   ok: boolean;
   status: number;
   error?: string;
-  // Number of (user, thread) deliveries enqueued — for ok=true cases.
+  // Per-fanout accounting. `deliveries` counts the (user, thread) pairs we
+  // enqueued; `failed` counts those whose drain rejected (TG outage, 429
+  // exhaustion, network flap). `ok` is true iff at least one drain
+  // succeeded — endpoint maps `ok=false` to 502.
   deliveries?: number;
+  failed?: number;
   sizeBytes?: number;
   filename?: string;
 }
@@ -127,30 +131,56 @@ export class OutboundDispatcher {
     const mediaType = mimeFromPath(req.path);
     const caption = (req.caption ?? defaultCaption(filename, buffer.length)).slice(0, 1024);
 
-    for (const [userId, windowId, threadId] of users) {
-      this.deps.messageQueue.enqueueContentMessage(userId, windowId, [caption], {
-        // contentType=tool_result + parts.length<=1 + imageData triggers the
-        // single-captioned-document path in MessageQueueManager.processContentTask.
-        contentType: "tool_result",
-        role: "assistant",
-        threadId,
-        imageData: [{ mediaType, data: buffer, filename }]
-      });
-      // Drain immediately so the user sees the file without waiting for the
-      // next agent turn to push the queue forward. Errors here are already
-      // logged by the queue worker.
-      this.deps.messageQueue.drain(userId).catch((err) => {
-        logger().warn(
-          { userId, windowId, threadId, filename, err },
-          "outbound sendFile drain failed"
-        );
-      });
+    // Fan out per (user, thread). Each delivery runs as an independent
+    // enqueue + drain so one failing chat doesn't block another. We AWAIT
+    // all drains here (vs fire-and-forget) so the HTTP response reflects
+    // real delivery — the CLI's "sent foo.zip" message must not lie when
+    // TG is down or 429-exhausted.
+    const outcomes = await Promise.allSettled(
+      users.map(async ([userId, windowId, threadId]) => {
+        this.deps.messageQueue.enqueueContentMessage(userId, windowId, [caption], {
+          // contentType=tool_result + parts.length<=1 + imageData triggers the
+          // single-captioned-document path in MessageQueueManager.processContentTask.
+          contentType: "tool_result",
+          role: "assistant",
+          threadId,
+          imageData: [{ mediaType, data: buffer, filename }]
+        });
+        await this.deps.messageQueue.drain(userId);
+      })
+    );
+
+    const failed: Array<{ userId: number; threadId: number; reason: unknown }> = [];
+    outcomes.forEach((o, i) => {
+      if (o.status === "rejected") {
+        const [userId, , threadId] = users[i]!;
+        failed.push({ userId, threadId, reason: o.reason });
+      }
+    });
+    if (failed.length > 0) {
+      logger().warn(
+        { filename, sizeBytes: fileStat.size, totalUsers: users.length, failed },
+        "outbound sendFile: some drains rejected"
+      );
     }
 
+    const deliveries = users.length - failed.length;
+    if (deliveries === 0) {
+      return {
+        ok: false,
+        status: 502,
+        error: `all ${users.length} delivery attempt(s) failed (see logs for details)`,
+        deliveries: 0,
+        failed: failed.length,
+        sizeBytes: fileStat.size,
+        filename
+      };
+    }
     return {
       ok: true,
       status: 200,
-      deliveries: users.length,
+      deliveries,
+      failed: failed.length,
       sizeBytes: fileStat.size,
       filename
     };

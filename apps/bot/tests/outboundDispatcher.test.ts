@@ -75,8 +75,6 @@ describe("OutboundDispatcher.sendFile", () => {
       ]
     });
     expect(options.imageData![0].data).toEqual(payload);
-    // drain is fire-and-forget on a separate microtask; let it settle.
-    await Promise.resolve();
     expect(deps.messageQueue.drain).toHaveBeenCalledWith(100);
   });
 
@@ -141,6 +139,37 @@ describe("OutboundDispatcher.sendFile", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe(400);
     expect(result.error).toContain("empty");
+  });
+
+  it("awaits all drains and reports partial failure without lying about success", async () => {
+    // Single user: drain rejects → all deliveries failed → ok=false 502.
+    const filePath = join(tempDir, "x.txt");
+    await writeFile(filePath, "x");
+    deps.messageQueue.drain.mockRejectedValueOnce(new Error("simulated TG outage"));
+
+    const result = await dispatcher.sendFile({ windowId: "@1", path: filePath });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe(502);
+    expect(result.deliveries).toBe(0);
+    expect(result.failed).toBe(1);
+    expect(result.error).toMatch(/all 1 delivery/);
+  });
+
+  it("reports partial success when one of N users drain fails", async () => {
+    const filePath = join(tempDir, "x.txt");
+    await writeFile(filePath, "x");
+    // First call fails (user 100), second succeeds (user 200).
+    deps.messageQueue.drain
+      .mockRejectedValueOnce(new Error("simulated"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await dispatcher.sendFile({ windowId: "@multi", path: filePath });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
+    expect(result.deliveries).toBe(1);
+    expect(result.failed).toBe(1);
   });
 
   it("rejects path/windowId of the wrong type up front", async () => {

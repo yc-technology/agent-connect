@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createReadStream, existsSync, watchFile, unwatchFile } from "node:fs";
 import { resolve as resolvePath, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -447,13 +446,38 @@ function sleep(ms: number): Promise<void> {
  */
 async function sendFile(argv: string[]): Promise<number> {
   const rest = argv[0] === "send" ? argv.slice(1) : argv;
-  const pathArg = rest.find((a) => !a.startsWith("--"));
+  // Hand-rolled parser: collect positionals while consuming `--caption <value>`
+  // as a two-arg flag. A naive `rest.find(a => !a.startsWith("--"))` picks up
+  // the caption *value* as if it were the path when the user puts the flag
+  // first (`agc send --caption "x" /tmp/foo.zip`).
+  const positionals: string[] = [];
+  let caption: string | null = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i]!;
+    if (arg === "--caption") {
+      const value = rest[i + 1];
+      if (value === undefined) {
+        process.stderr.write(`--caption requires a value\n`);
+        return 1;
+      }
+      caption = value;
+      i += 1;
+    } else if (arg.startsWith("--")) {
+      process.stderr.write(`unknown flag: ${arg}\n`);
+      return 1;
+    } else {
+      positionals.push(arg);
+    }
+  }
+  const pathArg = positionals[0];
   if (!pathArg) {
     process.stderr.write(`Usage: agc send <path> [--caption "..."]\n`);
     return 1;
   }
-  const captionIdx = rest.indexOf("--caption");
-  const caption = captionIdx >= 0 && rest[captionIdx + 1] ? rest[captionIdx + 1]! : null;
+  if (positionals.length > 1) {
+    process.stderr.write(`agc send takes one path; got ${positionals.length}\n`);
+    return 1;
+  }
   const absPath = resolvePath(pathArg);
   if (!existsSync(absPath)) {
     process.stderr.write(`file not found: ${absPath}\n`);
@@ -502,7 +526,12 @@ async function sendFile(argv: string[]): Promise<number> {
     });
     const text = await res.body.text();
     if (res.statusCode >= 200 && res.statusCode < 300) {
-      let parsed: { deliveries?: number; filename?: string; sizeBytes?: number } = {};
+      let parsed: {
+        deliveries?: number;
+        failed?: number;
+        filename?: string;
+        sizeBytes?: number;
+      } = {};
       try {
         parsed = JSON.parse(text);
       } catch {
@@ -512,6 +541,14 @@ async function sendFile(argv: string[]): Promise<number> {
       const size = parsed.sizeBytes !== undefined ? ` (${parsed.sizeBytes} bytes)` : "";
       const fan = parsed.deliveries !== undefined ? ` to ${parsed.deliveries} chat(s)` : "";
       process.stdout.write(`sent ${name}${size}${fan} via ${tmuxSession}:${windowId}\n`);
+      // Partial-failure: server delivered to at least one user but some drains
+      // rejected. Exit 0 (the send succeeded for someone) but print a warning
+      // so the operator notices and checks logs.
+      if (parsed.failed && parsed.failed > 0) {
+        process.stderr.write(
+          `warning: ${parsed.failed} delivery attempt(s) failed (see ~/.agent-connect/logs/current.log)\n`
+        );
+      }
       return 0;
     }
     process.stderr.write(`send failed (HTTP ${res.statusCode}): ${text}\n`);
