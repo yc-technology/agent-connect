@@ -61,6 +61,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
     "LICENSE"
   ],
@@ -71,7 +72,7 @@
     "dev": "tsx src/agent-connect/main.ts",
     "start": "node dist/src/agent-connect/main.js",
     "hook:install": "pnpm build && node dist/src/agent-connect/main.js hook --install",
-    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm --filter @yc-tech/agent-connect-web build && tsc -p tsconfig.build.json && node scripts/copy-web-dist.mjs",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && pnpm --filter @yc-tech/agent-connect-web build && tsc -p tsconfig.build.json && node scripts/copy-web-dist.mjs && node scripts/copy-skills.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:ts": "vitest run",
     "prepack": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm build"

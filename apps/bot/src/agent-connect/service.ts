@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { hookRouterRegistry, MultiBotRuntimeManager } from "./multiBotRuntime.js";
 import { outboundRegistry } from "./outboundDispatcher.js";
 import { proxyConfigLabel, setupHttpProxyFromEnv } from "./proxy.js";
+import { installBundledSkills } from "./skillInstaller.js";
 import {
   readRuntimeJson,
   removeRuntimeJson,
@@ -37,6 +38,17 @@ export async function runBotService(
 
   if (config.enableMonitor) {
     await syncAgentHooks(env, options.hookEntrypoint);
+  }
+
+  // Sync bundled skills into ~/.claude/skills and ~/.codex/skills so both
+  // agents discover `agc-send-file` (and future skills) without manual
+  // install steps. Idempotent and silent when unchanged, so daemon
+  // restarts don't spam the log. Best-effort: errors are logged but never
+  // block startup — the bot still works without skills installed.
+  try {
+    await installBundledSkills();
+  } catch (err) {
+    logger().warn({ err }, "skillInstaller threw at startup");
   }
   const configStore = new SqliteConfigStore(config.databaseFile);
   configStore.ensureDefaultBotFromEnv(env);

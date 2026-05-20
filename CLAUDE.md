@@ -97,6 +97,16 @@ agc stop --all                # also kill foreground runtime.json owner
 isn't `supervisor.serverPid`. Pass `--all` only when you've verified the
 other pid is also yours.
 
+### Bundled skills auto-install
+
+`apps/bot/skills/<name>/SKILL.md` files are copied into `apps/bot/dist/skills/`
+at build time, then synced into `~/.claude/skills/<name>/SKILL.md` AND
+`~/.codex/skills/<name>/SKILL.md` at every bot service startup. Idempotent
+(SHA-equivalent byte compare); silent log on no-op. Drop new skills under
+`apps/bot/skills/` and they ship + auto-install on next `agc restart`. The
+in-tree `agc-send-file` skill is what tells both agents to call
+`agc send <path>` instead of trying to base64 a binary.
+
 ### Outbound file delivery (`agc send`)
 
 ```bash
