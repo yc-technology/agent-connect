@@ -56,6 +56,121 @@ Expected generated hook command:
 agc hook
 ```
 
+Hook discovery is fully dynamic — `agc hook` reads `runtime.json` for
+the current host/port. **Changing `AGENT_CONNECT_HTTP_PORT` does not
+require reinstalling hooks.**
+
+## Operations (running + restarting)
+
+### Reload after a source change
+
+```bash
+pnpm -r build && agc restart    # daemon mode (typical install)
+```
+
+`agc restart` sends SIGUSR2 to the supervisor; supervisor kills its
+server child via `tree-kill` and re-spawns from disk. New `dist/`
+loaded immediately. Supervisor itself stays up (≈2-5 s TG downtime
+during respawn).
+
+### What `agc restart` does NOT reload
+
+- **Supervisor source code itself.** Supervisor was loaded once at
+  `agc start --daemon`. To pick up changes to `supervisor.ts`:
+  `agc stop && agc start --daemon`.
+- **CLI source code.** Each `agc` invocation is a fresh process,
+  so any cli change takes effect on the next `agc <cmd>` automatically
+  — no restart needed.
+
+### Other common commands
+
+```bash
+agc status                    # uptime / restartCount / last + live healthz
+agc logs                      # tail ~/.agent-connect/logs/current.log
+agc stop                      # SIGTERM supervisor (it cleans up child)
+agc stop --force              # SIGKILL skip-grace
+agc stop --all                # also kill foreground runtime.json owner
+                              # (rare: a foreground `agc start` running in parallel)
+```
+
+`agc stop` defaults to safe mode: never touches a runtime.json pid that
+isn't `supervisor.serverPid`. Pass `--all` only when you've verified the
+other pid is also yours.
+
+### Switching foreground → daemon (or back)
+
+The two modes are mutually exclusive (anti-double-start tcpProbe on the
+port). Safe sequence:
+
+```bash
+# from `pnpm dev:bot` foreground:
+# 1. Ctrl-C the foreground (wait for clean exit)
+# 2. agc start --daemon
+# 3. agc status   # verify healthz ✓
+# 4. send a TG message to verify end-to-end
+```
+
+Rollback when daemon misbehaves:
+
+```bash
+agc stop --force
+pnpm dev:bot
+```
+
+State (SQLite bots/, thread_bindings, etc.) is shared between the two
+modes — no migration needed.
+
+### Hot logs grep
+
+```bash
+tail -f ~/.agent-connect/logs/current.log | jq -c 'select(.level >= 40)'  # warns+errors
+tail -f ~/.agent-connect/logs/current.log | jq -c 'select(.windowId == "@8")'  # one window
+grep '"msg":"lazy-registered session"' ~/.agent-connect/logs/current.log | jq
+```
+
+`current.log` is a symlink that follows daily rotation, so the `tail -f`
+stays valid across midnight.
+
+### Smoke-test a fresh daemon without disturbing the running one
+
+Anti-double-start (`service.ts:31`) tcpProbes the recorded port. To
+smoke a separate daemon in parallel, isolate via env:
+
+```bash
+AGENT_CONNECT_DIR=/tmp/agc-smoke \
+  AGENT_CONNECT_HTTP_PORT=17777 \
+  AGENT_CONNECT_TS_ENABLE_TELEGRAM=false \
+  agc start --daemon
+# ... poke / verify ...
+AGENT_CONNECT_DIR=/tmp/agc-smoke agc stop
+rm -rf /tmp/agc-smoke
+```
+
+Without `AGENT_CONNECT_DIR=/tmp/...`, the smoke daemon would refuse to
+start (real daemon still listening on its port). **Do not omit the
+isolation** — without it, the smoke daemon's `agc stop` may read the
+real daemon's `runtime.json` and kill it.
+
+### Gotcha: build while bot is live
+
+`pnpm -r build` triggers `tsdown` on `@yc-tech/telegramify-markdown`,
+which rm's the package's `dist/` before recompiling. There is a
+sub-second window where `dist/index.mjs` doesn't exist. If a hook fires
+during that window, `agc hook` → import bot/dist → import telegramify
+dist → ERR_MODULE_NOT_FOUND. Usually self-corrects on the next hook
+fire. To avoid entirely, `agc stop` before `pnpm -r build`.
+
+### Env knobs (operational)
+
+| Var | Default | What |
+|---|---|---|
+| `AGENT_CONNECT_DIR` | `~/.agent-connect` | Root for sqlite, logs, runtime/supervisor json |
+| `AGENT_CONNECT_HTTP_PORT` | `17666` | Listen port (anti-clash with RStudio's 8787) |
+| `AGENT_CONNECT_LOG_LEVEL` | `info` | pino level |
+| `AGENT_CONNECT_LOG_STDOUT` | unset | Set `=1` to mirror logs to stdout too |
+| `AGENT_CONNECT_STATUS_THROTTLE_MS` | `3000` | Min spacing between status edits per (user, thread) |
+| `AGENT_CONNECT_IMAGE_AS_DOCUMENT` | `true` | Route tool_result images via sendDocument for full quality (`false` = compressed photo with inline preview) |
+
 ## Architecture Details
 
 See @.claude/rules/architecture.md for the system diagram and module inventory.
