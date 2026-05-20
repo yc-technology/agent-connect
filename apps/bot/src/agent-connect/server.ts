@@ -17,9 +17,11 @@ import type { BotRuntimeStatus } from "./multiBotRuntime.js";
 import type { HookRouter } from "./hookRouter.js";
 import type { HookEnvelope } from "./hookTypes.js";
 import { logger } from "./logger.js";
+import type { OutboundDispatcher } from "./outboundDispatcher.js";
 import { proxyConfigLabel, readHttpProxyConfig } from "./proxy.js";
 
 export type HookRouterLookup = (tmuxSession: string) => HookRouter | null;
+export type OutboundLookup = (tmuxSession: string) => OutboundDispatcher | null;
 
 export function registerHookEndpoint(fastify: FastifyInstance, lookup: HookRouterLookup): void {
   fastify.post("/hook/events", async (req, reply) => {
@@ -60,6 +62,43 @@ export interface ServerDeps {
   configStore?: SqliteConfigStore;
   runtimeManager?: BotRuntimeControl;
   hookRouterLookup?: HookRouterLookup;
+  outboundLookup?: OutboundLookup;
+}
+
+export function registerSendFileEndpoint(fastify: FastifyInstance, lookup: OutboundLookup): void {
+  fastify.post("/bot/send-file", async (req, reply) => {
+    const body = req.body as
+      | {
+          path?: unknown;
+          windowId?: unknown;
+          tmuxSession?: unknown;
+          caption?: unknown;
+        }
+      | undefined;
+    if (
+      !body ||
+      typeof body.path !== "string" ||
+      typeof body.windowId !== "string" ||
+      typeof body.tmuxSession !== "string"
+    ) {
+      return reply
+        .code(400)
+        .send({ ok: false, error: "path, windowId, tmuxSession are required strings" });
+    }
+    const caption = typeof body.caption === "string" ? body.caption : null;
+    const dispatcher = lookup(body.tmuxSession);
+    if (!dispatcher) {
+      return reply
+        .code(404)
+        .send({ ok: false, error: `no bot registered for tmux session ${body.tmuxSession}` });
+    }
+    const result = await dispatcher.sendFile({
+      path: body.path,
+      windowId: body.windowId,
+      caption
+    });
+    return reply.code(result.status).send(result);
+  });
 }
 
 export interface BotRuntimeControl {
@@ -144,6 +183,10 @@ export function createServer(config: Config, state: RuntimeState, deps: ServerDe
 
   if (deps.hookRouterLookup) {
     registerHookEndpoint(server, deps.hookRouterLookup);
+  }
+
+  if (deps.outboundLookup) {
+    registerSendFileEndpoint(server, deps.outboundLookup);
   }
 
   return server;

@@ -23,6 +23,10 @@ export interface PendingToolInfo {
 export interface ToolResultImage {
   mediaType: string;
   data: Buffer;
+  // Optional override for the Telegram document filename. Set by callers that
+  // know the real on-disk filename (e.g. `agc send /tmp/build.zip` → `build.zip`).
+  // When unset, sendImagesAsDocuments synthesizes one from mediaType.
+  filename?: string;
 }
 
 type JsonRecord = Record<string, unknown>;

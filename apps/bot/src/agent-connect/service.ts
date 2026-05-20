@@ -2,6 +2,7 @@ import { Config, sanitizeSensitiveEnv } from "./config.js";
 import { SqliteConfigStore } from "./configStore.js";
 import { logger } from "./logger.js";
 import { hookRouterRegistry, MultiBotRuntimeManager } from "./multiBotRuntime.js";
+import { outboundRegistry } from "./outboundDispatcher.js";
 import { proxyConfigLabel, setupHttpProxyFromEnv } from "./proxy.js";
 import {
   readRuntimeJson,
@@ -49,7 +50,8 @@ export async function runBotService(
   const multiBotRuntime = new MultiBotRuntimeManager(config, configStore);
   const server = await startServer(config, runtimeState, {
     ...(config.enableTelegram ? { configStore, runtimeManager: multiBotRuntime } : { configStore }),
-    hookRouterLookup: (tmuxSession) => hookRouterRegistry.get(tmuxSession) ?? null
+    hookRouterLookup: (tmuxSession) => hookRouterRegistry.get(tmuxSession) ?? null,
+    outboundLookup: (tmuxSession) => outboundRegistry.get(tmuxSession) ?? null
   });
   await writeRuntimeJson(runtimeDir, {
     httpHost: config.httpHost,

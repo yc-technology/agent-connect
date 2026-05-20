@@ -359,8 +359,9 @@ export async function sendPhoto(
     if (imageData.length === 1) {
       // For a single photo, `caption` lives directly on the send options.
       // Telegram caps captions at 1024 chars; we let the caller bound it.
-      const opts = { ...options, filename: filenameFromMediaType(imageData[0]!.mediaType) };
-      await api.sendPhoto?.(chatId, imageData[0]!.data, opts);
+      const img0 = imageData[0]!;
+      const opts = { ...options, filename: img0.filename ?? filenameFromMediaType(img0.mediaType) };
+      await api.sendPhoto?.(chatId, img0.data, opts);
       return;
     }
 
@@ -374,7 +375,7 @@ export async function sendPhoto(
       imageData.map((image, idx) => ({
         type: "photo" as const,
         media: image.data,
-        _filename: filenameFromMediaType(image.mediaType, idx),
+        _filename: image.filename ?? filenameFromMediaType(image.mediaType, idx),
         ...(idx === 0 && caption ? { caption } : {})
       })),
       groupOptions
@@ -408,7 +409,7 @@ async function sendImagesAsDocuments(
     const image = imageData[i]!;
     const docOptions: Record<string, unknown> = {
       ...baseOptions,
-      filename: filenameFromMediaType(image.mediaType, i)
+      filename: image.filename ?? filenameFromMediaType(image.mediaType, i)
     };
     // Caption only on the first document, mirroring photo-group semantics.
     if (i === 0 && caption) docOptions.caption = caption;

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { execFileSync } from "node:child_process";
 import { spawn } from "node:child_process";
 import { createReadStream, existsSync, watchFile, unwatchFile } from "node:fs";
-import { join } from "node:path";
+import { resolve as resolvePath, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runHookClient } from "@yc-tech/agent-connect-bot/hookClient";
 import { installAllHooks } from "@yc-tech/agent-connect-bot/hookInstaller";
@@ -42,6 +43,13 @@ Daemon (supervised, auto-restart):
 Hooks:
   agc hook               Run the agent hook handler (called by Claude/Codex)
   agc hook --install     Install Claude and Codex hooks
+
+Outbound file delivery:
+  agc send <path>        Send a local file to the Telegram topic bound to
+                         the current tmux window (50 MB cap; uses the running
+                         bot's sendDocument so the file arrives uncompressed)
+  agc send <path> --caption "..."
+                         Override the default "📎 filename (size)" caption
 
   agc help               Show this help
 `;
@@ -427,6 +435,95 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/**
+ * `agc send <path>` — POST the file path to the running bot's /bot/send-file
+ * endpoint. The server reads the file itself (same uid, same FS) and routes
+ * it via sendDocument to the Telegram topic bound to the caller's tmux
+ * window.
+ *
+ * Resolves windowId + tmuxSession via `tmux display-message`. Must be run
+ * from inside a tmux pane; otherwise the bot has no way to know which topic
+ * to target.
+ */
+async function sendFile(argv: string[]): Promise<number> {
+  const rest = argv[0] === "send" ? argv.slice(1) : argv;
+  const pathArg = rest.find((a) => !a.startsWith("--"));
+  if (!pathArg) {
+    process.stderr.write(`Usage: agc send <path> [--caption "..."]\n`);
+    return 1;
+  }
+  const captionIdx = rest.indexOf("--caption");
+  const caption = captionIdx >= 0 && rest[captionIdx + 1] ? rest[captionIdx + 1]! : null;
+  const absPath = resolvePath(pathArg);
+  if (!existsSync(absPath)) {
+    process.stderr.write(`file not found: ${absPath}\n`);
+    return 1;
+  }
+
+  let windowId: string;
+  let tmuxSession: string;
+  try {
+    windowId = execFileSync("tmux", ["display-message", "-p", "#{window_id}"], {
+      encoding: "utf8"
+    }).trim();
+    tmuxSession = execFileSync("tmux", ["display-message", "-p", "#{session_name}"], {
+      encoding: "utf8"
+    }).trim();
+  } catch (err) {
+    process.stderr.write(
+      `agc send must run inside a tmux pane (tmux display-message failed: ${err instanceof Error ? err.message : String(err)})\n`
+    );
+    return 1;
+  }
+  if (!windowId || !tmuxSession) {
+    process.stderr.write(`tmux display-message returned empty window/session\n`);
+    return 1;
+  }
+
+  const dir = agentConnectDir(process.env);
+  const runtime = await readRuntimeJson(dir);
+  if (!runtime) {
+    process.stderr.write(
+      `bot service is not running (no runtime.json at ${dir}). Start it with: agc start\n`
+    );
+    return 1;
+  }
+
+  const body = JSON.stringify({ path: absPath, windowId, tmuxSession, caption });
+  try {
+    const res = await request(`http://${runtime.httpHost}:${runtime.httpPort}/bot/send-file`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+      // Uploads + Telegram sendDocument can take a bit for 50 MB files; give
+      // the server time before the client times out.
+      headersTimeout: 60_000,
+      bodyTimeout: 60_000
+    });
+    const text = await res.body.text();
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      let parsed: { deliveries?: number; filename?: string; sizeBytes?: number } = {};
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        // Server returned 200 with non-JSON — fall through with a generic message.
+      }
+      const name = parsed.filename ?? absPath;
+      const size = parsed.sizeBytes !== undefined ? ` (${parsed.sizeBytes} bytes)` : "";
+      const fan = parsed.deliveries !== undefined ? ` to ${parsed.deliveries} chat(s)` : "";
+      process.stdout.write(`sent ${name}${size}${fan} via ${tmuxSession}:${windowId}\n`);
+      return 0;
+    }
+    process.stderr.write(`send failed (HTTP ${res.statusCode}): ${text}\n`);
+    return 1;
+  } catch (err) {
+    process.stderr.write(
+      `send failed: ${err instanceof Error ? err.message : String(err)}\n`
+    );
+    return 1;
+  }
+}
+
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const command = argv[0] ?? "start";
 
@@ -459,6 +556,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === "restart") return restartDaemon();
   if (command === "status") return showStatus();
   if (command === "logs") return tailLogs();
+  if (command === "send") return sendFile(argv);
 
   process.stderr.write(`Unknown command: ${command}\n\n${HELP_TEXT}`);
   return 1;

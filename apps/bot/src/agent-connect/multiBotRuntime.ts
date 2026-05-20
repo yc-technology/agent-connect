@@ -12,6 +12,7 @@ import { logger } from "./logger.js";
 import { MessageQueueManager } from "./messageQueue.js";
 import { telegramApiFromGrammy } from "./messageSender.js";
 import { migrateJsonToSqliteIfNeeded } from "./migration.js";
+import { OutboundDispatcher, outboundRegistry } from "./outboundDispatcher.js";
 import { handleNewMessage } from "./runtime.js";
 import { SessionManager } from "./session.js";
 import { SessionRegistry } from "./sessionRegistry.js";
@@ -156,6 +157,8 @@ export class MultiBotRuntimeManager {
         agentType: config.agentType
       });
       hookRouterRegistry.set(config.tmuxSessionName, hookRouter);
+      const outboundDispatcher = new OutboundDispatcher({ sessionManager, messageQueue });
+      outboundRegistry.set(config.tmuxSessionName, outboundDispatcher);
 
       // Startup catch-up: deliver any assistant text written while the bot was offline.
       for (const session of registry.allLiveSessions()) {
@@ -261,6 +264,7 @@ export class MultiBotRuntimeManager {
     instance.bashCapture.cancelAll();
     await instance.statusPoller.stop();
     hookRouterRegistry.delete(instance.config.tmuxSessionName);
+    outboundRegistry.delete(instance.config.tmuxSessionName);
     try {
       await instance.bot.stop();
     } catch (error) {

@@ -39,6 +39,7 @@ function fakeApi(): TelegramApiLike & {
     sendPhoto: vi.fn(async (_chatId, photo) => {
       fake.photos.push(photo);
     }),
+    sendDocument: vi.fn(),
     sendMediaGroup: vi.fn(),
     sendChatAction: vi.fn()
   };
@@ -401,6 +402,32 @@ describe("message queue tool handling", () => {
     } finally {
       delete process.env.AGENT_CONNECT_IMAGE_AS_DOCUMENT;
     }
+  });
+
+  it("tool_result image with filename preserves the real filename through sendDocument", async () => {
+    // Non-photo MIME (application/zip) forces the document path. Caller-set
+    // `filename` (used by `agc send build.zip`) must beat the synthesized
+    // mediaType-derived name, so the user downloads `build.zip` not `image.bin`.
+    fake = fakeApi();
+    const docCalls: Array<{ filename?: string; caption?: string }> = [];
+    fake.sendDocument = vi.fn(async (_chatId, _doc, options) => {
+      docCalls.push(options as { filename?: string; caption?: string });
+    }) as NonNullable<TelegramApiLike["sendDocument"]>;
+
+    const manager = queue();
+    manager.enqueueContentMessage(100, "@1", ["📎 build.zip (12 B)"], {
+      contentType: "tool_result",
+      toolUseId: "tu-zip",
+      imageData: [
+        { mediaType: "application/zip", data: Buffer.from("PK fake zip"), filename: "build.zip" }
+      ]
+    });
+
+    await manager.drain(100);
+
+    expect(fake.sendDocument).toHaveBeenCalledTimes(1);
+    expect(docCalls[0]?.filename).toBe("build.zip");
+    expect(docCalls[0]?.caption).toBe("📎 build.zip (12 B)");
   });
 
   it("clears tool ids for a topic", async () => {

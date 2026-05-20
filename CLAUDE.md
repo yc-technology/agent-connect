@@ -97,6 +97,21 @@ agc stop --all                # also kill foreground runtime.json owner
 isn't `supervisor.serverPid`. Pass `--all` only when you've verified the
 other pid is also yours.
 
+### Outbound file delivery (`agc send`)
+
+```bash
+agc send /tmp/build.zip                       # default caption "📎 build.zip (size)"
+agc send /tmp/notes.pdf --caption "Q2 notes"  # custom caption (truncated at 1024)
+```
+
+Must run inside a tmux pane — the CLI resolves `windowId` + `tmuxSession`
+via `tmux display-message` and POSTs to the bot's `/bot/send-file`. The
+server reads the file itself (same uid) and routes through
+`MessageQueueManager` so the upload competes fairly with normal
+transcript drains. 50 MB cap (Telegram's `sendDocument` limit). Empty
+files and non-regular paths are rejected up front. See
+[outboundDispatcher.ts](apps/bot/src/agent-connect/outboundDispatcher.ts).
+
 ### Switching foreground → daemon (or back)
 
 The two modes are mutually exclusive (anti-double-start tcpProbe on the
