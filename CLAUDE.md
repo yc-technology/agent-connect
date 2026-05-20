@@ -99,12 +99,20 @@ other pid is also yours.
 
 ### Bundled skills auto-install
 
-`apps/bot/skills/<name>/SKILL.md` files are copied into `apps/bot/dist/skills/`
-at build time, then synced into `~/.claude/skills/<name>/SKILL.md` AND
-`~/.codex/skills/<name>/SKILL.md` at every bot service startup. Idempotent
-(SHA-equivalent byte compare); silent log on no-op. Drop new skills under
-`apps/bot/skills/` and they ship + auto-install on next `agc restart`. The
-in-tree `agc-send-file` skill is what tells both agents to call
+`apps/bot/skills/<name>/**` directory trees are copied into
+`apps/bot/dist/skills/` at build time, then recursively synced into
+`~/.claude/skills/<name>/` AND `~/.codex/skills/<name>/` at every bot
+service startup. Per-file byte compare; silent log on no-op. Drop new
+skills under `apps/bot/skills/` (with `references/`, `assets/`, scripts —
+all preserved) and they ship + auto-install on next `agc restart`.
+
+**Bundled wins**: a user hand-edit at `~/.claude/skills/agc-send-file/SKILL.md`
+gets overwritten on the next restart and logged as `action: "updated"` —
+the installer can't distinguish a user tweak from a stale bundled version.
+Power users who want a custom variant should copy the skill folder to a
+new name.
+
+The in-tree `agc-send-file` skill tells both agents to call
 `agc send <path>` instead of trying to base64 a binary.
 
 ### Outbound file delivery (`agc send`)
