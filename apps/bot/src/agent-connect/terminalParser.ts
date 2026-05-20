@@ -134,24 +134,47 @@ function shortenSeparators(text: string): string {
 }
 
 function tryExtract(lines: string[], pattern: UIPattern): InteractiveUIContent | null {
+  // Scan bottom-up so we always lock onto the LATEST occurrence of the UI.
+  // capturePane includes scrollback, so an older dismissed picker can sit
+  // above the live one — a top-down scan would lock onto the stale one and
+  // ship dead content (with a keyboard wired to the live windowId — worst of
+  // both worlds). Bottom-up means the current on-screen UI always wins.
+  //
+  // For patterns with multiple `top` regexes (e.g. ResumeSummaryPrompt's
+  // two-line header), we resolve each regex independently to its most recent
+  // hit, then take the *earliest* of those as topIdx — that way the full
+  // multi-line header is preserved without picking up stale pickers above.
   let topIdx: number | null = null;
   let bottomIdx: number | null = null;
 
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i] ?? "";
-    if (topIdx === null) {
-      if (pattern.top.some((re) => re.test(line))) {
-        topIdx = i;
+  if (pattern.bottom.length > 0) {
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (pattern.bottom.some((re) => re.test(lines[i] ?? ""))) {
+        bottomIdx = i;
+        break;
       }
-    } else if (pattern.bottom.length > 0 && pattern.bottom.some((re) => re.test(line))) {
-      bottomIdx = i;
-      break;
     }
-  }
-
-  if (topIdx === null) return null;
-
-  if (pattern.bottom.length === 0) {
+    if (bottomIdx === null) return null;
+    const topMatches: number[] = [];
+    for (const re of pattern.top) {
+      for (let i = bottomIdx - 1; i >= 0; i -= 1) {
+        if (re.test(lines[i] ?? "")) {
+          topMatches.push(i);
+          break;
+        }
+      }
+    }
+    if (topMatches.length === 0) return null;
+    topIdx = Math.min(...topMatches);
+  } else {
+    // No bottom marker: most recent top match, then last non-blank line below.
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      if (pattern.top.some((re) => re.test(lines[i] ?? ""))) {
+        topIdx = i;
+        break;
+      }
+    }
+    if (topIdx === null) return null;
     for (let i = lines.length - 1; i > topIdx; i -= 1) {
       if ((lines[i] ?? "").trim()) {
         bottomIdx = i;
@@ -203,12 +226,18 @@ export function parseStatusLine(paneText: string): string | null {
   if (chromeIdx === null) return null;
 
   // Walk back from chrome looking for the spinner-prefixed status line.
-  // Claude attaches supplementary content BELOW the spinner — `/compact`
-  // shows "▰▰▱▱ NN%" plus a "⎿ Tip:" hint with an indented continuation,
-  // so the spinner line can be 3-4 lines above chrome. Every attachment
-  // Claude emits is indented (leading whitespace), so a single skip rule
-  // covers them all: opportunistically harvest a progress percent from the
-  // skipped lines so it can be appended to the status text.
+  // Claude attaches several kinds of "supplementary" content between the
+  // spinner and the chrome that we need to walk past:
+  //   - Indented lines: `/compact` progress bar "▰▰▱▱ NN%", "⎿  Tip:"
+  //     hints with indented continuations, multi-option rating choices.
+  //   - `●`-prefixed system notifications: the periodic
+  //     "How is Claude doing this session?" rating prompt, plugin update
+  //     banners, etc. These are NOT indented but they are not the
+  //     spinner either — without skipping them the walk-back terminates
+  //     prematurely and we miss the real spinner above (silent failure:
+  //     Telegram sees only the runtime "Thinking..." status forever).
+  // Opportunistically harvest a progress percent from skipped lines so it
+  // can be appended to the status text.
   let statusText: string | null = null;
   let progressPct: string | null = null;
 
@@ -224,6 +253,7 @@ export function parseStatusLine(paneText: string): string | null {
 
     const trimmed = rawLine.trim();
     const first = [...trimmed][0];
+    if (first === "●") continue; // Claude system notifications — skip past.
     if (first && STATUS_SPINNERS.has(first)) {
       statusText = trimmed.slice(first.length).trim();
     }
@@ -305,6 +335,11 @@ export function parseUsageOutput(paneText: string): UsageInfo | null {
   let startIdx: number | null = null;
   let endIdx: number | null = null;
 
+  // Top-down scan is intentional: caller is the /usage command handler, which
+  // captures the pane immediately after rendering — the latest `Settings: Usage`
+  // block is also the first one. A stale block sitting earlier in scrollback
+  // would only matter if /usage was re-run quickly without the previous frame
+  // scrolling out; flip this to bottom-up if that becomes a real complaint.
   for (let i = 0; i < lines.length; i += 1) {
     const stripped = (lines[i] ?? "").trim();
     if (startIdx === null) {

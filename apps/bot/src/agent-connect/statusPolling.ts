@@ -11,6 +11,7 @@ import { isForumThreadId, threadOptions } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
 import type { SessionManager } from "./session.js";
 import type { SessionRegistry } from "./sessionRegistry.js";
+import { errorMessage } from "./utils.js";
 
 export const STATUS_POLL_INTERVAL = 1.0;
 export const TOPIC_CHECK_INTERVAL = 60.0;
@@ -253,13 +254,4 @@ function isBenignTopicProbeError(error: unknown): boolean {
     message.includes("topic_closed") ||
     message.includes("not enough rights to send chat action")
   );
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === "object" && error !== null) {
-    const description = "description" in error ? (error as { description?: unknown }).description : undefined;
-    if (typeof description === "string") return description;
-  }
-  return String(error);
 }

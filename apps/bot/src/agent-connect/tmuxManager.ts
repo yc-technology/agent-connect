@@ -8,6 +8,16 @@ import { logger } from "./logger.js";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Scrollback rows pulled in addition to the visible viewport on every
+ * `capturePane`. Tall AskUserQuestion pickers (long option descriptions) push
+ * their `☐` top marker above the visible area; without scrollback, the picker
+ * is silently invisible to terminalParser and `handleInteractiveUi` never
+ * fires. 200 covers every Claude/Codex overlay we've observed with margin and
+ * costs ~30 KB of pane text per tick — negligible.
+ */
+const PANE_SCROLLBACK_LINES = 200;
+
 export interface TmuxWindow {
   windowId: string;
   windowName: string;
@@ -95,7 +105,7 @@ export class TmuxManager {
   async capturePane(windowId: string, withAnsi = false): Promise<string | null> {
     const args = ["capture-pane"];
     if (withAnsi) args.push("-e");
-    args.push("-p", "-t", windowId);
+    args.push("-S", `-${PANE_SCROLLBACK_LINES}`, "-p", "-t", windowId);
 
     const result = await this.execTmux(args, { rejectOnError: false });
     return result.code === 0 ? result.stdout : null;

@@ -64,6 +64,27 @@ describe("parseStatusLine", () => {
     expect(parseStatusLine(pane)).toBe("Working on it");
   });
 
+  it("walks past Claude `● ...` system notifications between spinner and chrome", () => {
+    // Real symptom from a live cc-dog:techbooks-project session: Claude's
+    // periodic "How is Claude doing this session?" rating prompt landed
+    // between the spinner and the chrome, terminating walk-back early →
+    // parseStatusLine returned null → statusPolling never overrode the
+    // runtime's "Thinking..." status. User saw only "Thinking..." for
+    // minutes despite the spinner being live.
+    const pane =
+      "✶ Hashing… (3m 21s · ↓ 9.1k tokens)\n" +
+      "  ⎿  Tip: Use /btw to ask a quick side question\n" +
+      "\n" +
+      "● How is Claude doing this session? (optional)\n" +
+      "  1: Bad    2: Fine   3: Good   0: Dismiss\n" +
+      "\n" +
+      "───────────────────────────────────────\n" +
+      "❯ \n" +
+      "───────────────────────────────────────\n" +
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n";
+    expect(parseStatusLine(pane)).toBe("Hashing… (3m 21s · ↓ 9.1k tokens)");
+  });
+
   it("identifies Claude completed status lines", () => {
     expect(isCompletedStatusLine("Cooked for 3s")).toBe(true);
     expect(isCompletedStatusLine("Baked for 1.5s")).toBe(true);
@@ -294,6 +315,42 @@ describe("interactive UI extraction", () => {
     // Should NOT bleed earlier non-prompt context into the extraction.
     expect(result?.content).not.toContain("现在可以了吧");
     expect(result?.content).not.toContain("Plan Mode");
+  });
+
+  it("locks onto the latest AskUserQuestion when an older one lingers in scrollback", () => {
+    // capturePane now includes scrollback (-S -200). A previously-dismissed
+    // picker can sit above the live one. A top-down scan would lock onto the
+    // dead picker and ship stale content with a keyboard wired to the live
+    // windowId — the parser must scan bottom-up.
+    const pane =
+      "(some history)\n" +
+      "\n" +
+      " ☐ Old question: pick one?\n" +
+      "Old picker description\n" +
+      "❯ 1. Old option A\n" +
+      "  2. Old option B\n" +
+      "─────\n" +
+      "Enter to select · ↑/↓ to navigate · Esc to cancel\n" +
+      "\n" +
+      "User declined to answer questions\n" +
+      "⎿  · Old prompt was dismissed\n" +
+      "\n" +
+      "(more conversation)\n" +
+      "⏺ Now there's a new question\n" +
+      "\n" +
+      " ☐ New question: pick one?\n" +
+      "New picker description\n" +
+      "❯ 1. New option X\n" +
+      "  2. New option Y\n" +
+      "─────\n" +
+      "Enter to select · ↑/↓ to navigate · Esc to cancel\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("AskUserQuestion");
+    expect(result?.content).toContain("New question");
+    expect(result?.content).toContain("New option X");
+    expect(result?.content).not.toContain("Old question");
+    expect(result?.content).not.toContain("Old option A");
+    expect(result?.content).not.toContain("declined");
   });
 });
 

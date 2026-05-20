@@ -9,11 +9,31 @@ import {
   CB_ASK_TAB,
   CB_ASK_UP
 } from "./callbackData.js";
+import { logger } from "./logger.js";
 import { NO_LINK_PREVIEW, type TelegramApiLike } from "./messageSender.js";
 import type { SessionRoutingLike } from "./messageQueue.js";
 import { extractInteractiveContent, isInteractiveUi } from "./terminalParser.js";
 import { threadOptions } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
+import { errorMessage } from "./utils.js";
+
+// statusPolling retries handleInteractiveUi every 1s while a picker is visible
+// AND interactiveModes is unset (i.e. while every send is failing). Without
+// throttling, a persistent failure (e.g. chat closed, message_thread_id
+// invalid) floods the log at 1 Hz per stuck window. Coalesce identical errors
+// per (windowId, msg) so we see the first occurrence + roughly one heartbeat
+// per minute, instead of 60 lines/min.
+const INTERACTIVE_LOG_THROTTLE_MS = 60_000;
+const interactiveLogLastAt = new Map<string, number>();
+
+function shouldLogInteractiveFailure(windowId: string, kind: string, errMsg: string): boolean {
+  const key = `${windowId}::${kind}::${errMsg}`;
+  const now = Date.now();
+  const last = interactiveLogLastAt.get(key) ?? 0;
+  if (now - last < INTERACTIVE_LOG_THROTTLE_MS) return false;
+  interactiveLogLastAt.set(key, now);
+  return true;
+}
 
 export const INTERACTIVE_TOOL_NAMES = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
@@ -100,7 +120,15 @@ export async function handleInteractiveUi(
   if (!paneText || !isInteractiveUi(paneText)) return false;
 
   const content = extractInteractiveContent(paneText);
-  if (!content) return false;
+  if (!content) {
+    if (shouldLogInteractiveFailure(windowId, "extract-null", "")) {
+      logger().warn(
+        { userId, windowId, threadId },
+        "interactiveUi: pane isInteractiveUi but extractInteractiveContent=null"
+      );
+    }
+    return false;
+  }
 
   const key = interactiveKey(userId, threadId);
   const chatId = deps.routing.resolveChatId(userId, threadId);
@@ -121,19 +149,80 @@ export async function handleInteractiveUi(
         interactiveModes.set(key, windowId);
         return true;
       }
+      const editErr = errorMessage(error);
+      if (shouldLogInteractiveFailure(windowId, "edit-failed", editErr)) {
+        logger().warn(
+          {
+            userId,
+            windowId,
+            threadId,
+            chatId,
+            existingMessageId,
+            uiName: content.name,
+            err: editErr
+          },
+          "interactiveUi: editMessageText failed (non-not-modified); falling back to sendMessage"
+        );
+      }
     }
   }
 
   try {
     const sent = await deps.api.sendMessage(chatId, content.content, options);
-    if (!sent) return false;
+    if (!sent) {
+      if (shouldLogInteractiveFailure(windowId, "send-falsy", "")) {
+        logger().warn(
+          {
+            userId,
+            windowId,
+            threadId,
+            chatId,
+            contentLen: content.content.length,
+            uiName: content.name
+          },
+          "interactiveUi: sendMessage returned falsy"
+        );
+      }
+      return false;
+    }
     interactiveMessages.set(key, sent.message_id);
     interactiveModes.set(key, windowId);
+    // Reset throttle state for this window so the next failure (if any) logs
+    // immediately rather than being suppressed by a stale previous-error key.
+    for (const k of interactiveLogLastAt.keys()) {
+      if (k.startsWith(`${windowId}::`)) interactiveLogLastAt.delete(k);
+    }
+    logger().info(
+      {
+        userId,
+        windowId,
+        threadId,
+        chatId,
+        messageId: sent.message_id,
+        uiName: content.name
+      },
+      "interactiveUi: picker forwarded to Telegram"
+    );
     if (existingMessageId && deps.api.deleteMessage) {
       await deps.api.deleteMessage(chatId, existingMessageId).catch(() => undefined);
     }
     return true;
-  } catch {
+  } catch (error) {
+    const sendErr = errorMessage(error);
+    if (shouldLogInteractiveFailure(windowId, "send-threw", sendErr)) {
+      logger().warn(
+        {
+          userId,
+          windowId,
+          threadId,
+          chatId,
+          contentLen: content.content.length,
+          uiName: content.name,
+          err: sendErr
+        },
+        "interactiveUi: sendMessage threw"
+      );
+    }
     return false;
   }
 }

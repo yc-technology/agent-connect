@@ -5,6 +5,21 @@ import { basename, dirname, join } from "node:path";
 
 export const AGENT_CONNECT_DIR_ENV = "AGENT_CONNECT_DIR";
 
+/**
+ * Normalize an unknown thrown value to a short human-readable string.
+ *
+ * grammy bubbles up Telegram errors with the readable summary on a `.description`
+ * field rather than `Error.message`; pick that up so logs don't show "[object Object]".
+ */
+export function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null) {
+    const description = "description" in error ? (error as { description?: unknown }).description : undefined;
+    if (typeof description === "string") return description;
+  }
+  return String(error);
+}
+
 export function agentConnectDir(env: NodeJS.ProcessEnv = process.env): string {
   const raw = env[AGENT_CONNECT_DIR_ENV];
   return raw && raw.length > 0 ? raw : join(homedir(), ".agent-connect");
