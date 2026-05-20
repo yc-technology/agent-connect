@@ -171,6 +171,104 @@ fire. To avoid entirely, `agc stop` before `pnpm -r build`.
 | `AGENT_CONNECT_STATUS_THROTTLE_MS` | `3000` | Min spacing between status edits per (user, thread) |
 | `AGENT_CONNECT_IMAGE_AS_DOCUMENT` | `true` | Route tool_result images via sendDocument for full quality (`false` = compressed photo with inline preview) |
 
+## Conventions & Invariants
+
+Hard-won rules from past incidents. Each has its own scar; preserve
+them when refactoring.
+
+### Hook routing
+
+- **`SessionStart` seeds `last_byte_offset` to file EOF for EVERY source.**
+  Not just `resume`. Claude's `/compact` does NOT truncate the jsonl
+  (it appends a summary entry), so a naive `offset=0` for `compact`
+  re-emits the entire historical transcript to Telegram. Same trap for
+  `lazyRegisterIfMissing`. The single helper is
+  `hookRouter.offsetSkippingHistory(transcriptPath)` — use it for any
+  new "fresh session row" path.
+- **Foreign-agent filter is load-bearing.** Claude Code 2.x spawns a
+  `codex-companion` subprocess that shares the parent's `TMUX_PANE`;
+  both fire hooks into the same `/hook/events` endpoint by
+  `tmux_session`. `HookRouter.shouldIgnore` rejects events whose
+  `transcript_path` doesn't match the bot's configured `agentType`
+  (looks for `/.codex/` vs `/.claude/`). Without it, a Codex
+  SessionStart can `DELETE+INSERT` over the live Claude session row.
+- **Per-window event serialization + per-session drain lock.**
+  `HookRouter.windowQueues` (per window) and
+  `SessionRegistry.withSessionLock` (per session) together guarantee
+  `SessionStart` always completes before any subsequent event for the
+  same window, and the same transcript file is never drained
+  concurrently. Don't add async work in these paths that bypasses the
+  queue/lock.
+
+### CLI safety
+
+- **`agc stop` never touches a `runtime.json` pid it doesn't own.**
+  When a live supervisor exists and `runtime.pid !== supervisor.serverPid`,
+  the runtime.json owner is treated as a foreign foreground bot and
+  left alone (only `--all` overrides). The May-19 smoke-test incident
+  killed an unrelated foreground bot via the old "kill any alive pid"
+  logic; the new rule prevents it.
+
+### TUI parsing
+
+- **`parseStatusLine` walks back from chrome; skip rules are non-obvious.**
+  The walk-back terminates on the first "real" line — so anything
+  Claude renders between the spinner and the chrome that isn't a
+  recognized attachment will silently break status detection. Current
+  skip rules (in `terminalParser.ts:238`):
+  - leading whitespace → indented continuation (Tip hints, progress
+    bars, numbered choices)
+  - `●` prefix → Claude system notifications (rating prompt, plugin
+    update banners)
+  - `STATUS_SPINNERS` set → match and capture
+  - anything else → terminate
+  Add to the skip list (with a test) whenever you see a new
+  non-spinner non-indented prefix appearing in real panes.
+- **`UI_PATTERNS` scan is bottom-up.** `capturePane` includes 200
+  lines of scrollback, so the LATEST occurrence of an interactive UI
+  must win — top-down would lock onto a stale picker scrolled above.
+
+## Testing & runtime patterns
+
+- **Use `installCaptureLogger`, not `vi.spyOn(console, ...)`.** Business
+  code logs through `logger()` (pino) since 0.1.1. The capture helper
+  in `apps/bot/tests/helpers/testLogger.ts` returns an object with a
+  `records[]` array + `at(level)` filter; tests assert on structured
+  fields (`windowId`, `userId`, etc.) instead of brittle string
+  matching on the console fallback. See `hookRouter.test.ts` /
+  `messageQueue.test.ts` for the pattern.
+- **Poll for async state, don't `setTimeout` and hope.** Tests that
+  depend on the supervisor's `await persist()` finishing on disk
+  before assertions raced on slow CI even though they passed on
+  macOS. The pattern in `supervisor.test.ts` "healthz failures past
+  the threshold trigger a restart": loop `readSupervisorJson` every
+  25 ms up to 3 s waiting for the expected field to appear. Fast on
+  fast machines, robust on slow CI.
+- **Behavior-flip env vars get explicit opt-out in legacy tests.**
+  When you change a default (e.g. 0.2.1's `AGENT_CONNECT_IMAGE_AS_DOCUMENT=true`),
+  existing tests asserting the OLD path should set the env var
+  inline + clear in `afterEach`. See `messageSender.test.ts` /
+  `messageQueue.test.ts` for the pattern. Keeps old assertions valid
+  without rewriting them to assert the new path.
+- **`MessageQueueManager.drain(userId)` is a chained promise, not
+  single-flight.** Earlier versions returned early if `processing.has(userId)`
+  was true, which broke the await contract — `Stop`'s onTurnEnd
+  reaction would fire before the prior turn's text had been recorded
+  by `lastAssistantMessageIds`, attaching the reaction to the wrong
+  message. The current chain-based implementation ensures each caller
+  awaits THEIR queued work. Don't revert to single-flight.
+- **`withRetryAfter` is bounded at 4 attempts.** Content path retries
+  on Telegram 429 by sleeping `retry_after`. If exhausted, the wrapper
+  re-throws; `runDrainLoop` logs an `error` and drops the task. Grep
+  the log for `"messageQueue task failed"` to find lost-content
+  incidents.
+- **`window` delete cascades.** Schema FK chain:
+  `windows → sessions / thread_bindings / user_window_offsets` all
+  `ON DELETE CASCADE`. So `registry.deleteWindow(windowId)` cleans up
+  the full topic-binding graph in one statement — used by
+  `statusPolling.cleanupTopicBinding` when a tmux window vanishes.
+  Don't manually delete from child tables; let the FK do its work.
+
 ## Architecture Details
 
 See @.claude/rules/architecture.md for the system diagram and module inventory.
