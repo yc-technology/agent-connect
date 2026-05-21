@@ -253,7 +253,14 @@ export function parseStatusLine(paneText: string): string | null {
 
     const trimmed = rawLine.trim();
     const first = [...trimmed][0];
-    if (first === "●") continue; // Claude system notifications — skip past.
+    // Claude system notifications use two visually-similar but DIFFERENT glyphs:
+    //   ● U+25CF BLACK CIRCLE          → "How is Claude doing this session?" rating
+    //   ⏺ U+23FA BLACK CIRCLE FOR RECORD → "Can Anthropic look at your session transcript?"
+    //   ⏺ also prefixes tool-use displays ("⏺ Bash(...)"), but those sit ABOVE the
+    //   spinner in the pane order — skipping them here only matters when the
+    //   spinner is below them in the walk-back window, which doesn't happen
+    //   (spinner is always immediately before chrome).
+    if (first === "●" || first === "⏺") continue;
     if (first && STATUS_SPINNERS.has(first)) {
       statusText = trimmed.slice(first.length).trim();
     }

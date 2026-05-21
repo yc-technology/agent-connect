@@ -85,6 +85,30 @@ describe("parseStatusLine", () => {
     expect(parseStatusLine(pane)).toBe("Hashing… (3m 21s · ↓ 9.1k tokens)");
   });
 
+  it("walks past Claude `⏺ ...` (U+23FA, record-circle) session-transcript prompt", () => {
+    // Live regression from cc-dog:techbooks-project: Claude's "Can Anthropic
+    // look at your session transcript?" telemetry prompt uses U+23FA
+    // (RECORD-CIRCLE), NOT U+25CF (BLACK CIRCLE) — the previous `●` skip
+    // rule didn't catch it, so walk-back terminated on the prompt → status
+    // detection failed → user saw only the generic "Thinking..." for
+    // minutes while the real `✢ Fiddle-faddling… (3m 33s)` was right there.
+    const pane =
+      "✢ Fiddle-faddling… (3m 33s · ↑ 11.7k tokens · almost done thinking)\n" +
+      "  ⎿  Tip: Use /btw to ask a quick side question\n" +
+      "\n" +
+      "⏺ Can Anthropic look at your session transcript to help us improve Claude Code?\n" +
+      "  Learn more: https://code.claude.com/docs/en/data-usage#session-quality-surveys\n" +
+      "  y: Yes    n: No     d: Don't ask again\n" +
+      "\n" +
+      "───────────────────────────────────────\n" +
+      "❯ \n" +
+      "───────────────────────────────────────\n" +
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt\n";
+    expect(parseStatusLine(pane)).toBe(
+      "Fiddle-faddling… (3m 33s · ↑ 11.7k tokens · almost done thinking)"
+    );
+  });
+
   it("identifies Claude completed status lines", () => {
     expect(isCompletedStatusLine("Cooked for 3s")).toBe(true);
     expect(isCompletedStatusLine("Baked for 1.5s")).toBe(true);
