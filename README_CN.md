@@ -17,9 +17,88 @@ Agent Connect 通过 Telegram 远程控制本地 tmux 里的 Claude Code 或 Cod
 ## 要求
 
 - Node.js 22+
-- pnpm 10.6.3+
+- pnpm 10.6.3+（只在 monorepo 开发时需要，`npm i -g` 不需要）
 - tmux
 - `claude` 或 `codex` 命令已在 PATH 中
+
+## 快速开始（npm 安装）
+
+刚 `npm i -g @yc-tech/agent-connect-cli` 完按顺序走。也可以把这一节直
+接发给你的 Claude / Codex 让它带你做。
+
+### 1. 创建 Telegram bot
+
+1. 打开 [@BotFather](https://t.me/BotFather)，`/newbot`，跟着提示走
+   —— 复制返回的 token（`1234567890:AB...`）。
+2. **重要**：在 BotFather 的 profile 打开 bot 的 mini-app →
+   **Settings → Bot Settings → Threaded Mode → Enable**。不开后面创建
+   topic 会静默失败。
+
+### 2. 配置环境变量
+
+```bash
+mkdir -p ~/.agent-connect
+cat >> ~/.agent-connect/.env <<EOF
+TELEGRAM_BOT_TOKEN=<粘贴你的 token>
+TELEGRAM_ALLOWED_USERS=<你的 Telegram 数字 id>
+EOF
+chmod 600 ~/.agent-connect/.env
+```
+
+数字 id：DM [@userinfobot](https://t.me/userinfobot) 即可。多人逗号
+分隔不要空格。**不配 `TELEGRAM_ALLOWED_USERS` 任何找到 bot 的人都
+能跟它说话。**
+
+### 3. 启动 daemon + 安装 hook
+
+```bash
+agc start --daemon       # 后台 spawn supervisor + server
+agc status               # 应该看到 "live healthz: 200 ✓"
+agc hook --install       # 接通 Claude Code + Codex 的 hook
+```
+
+如果 `agc status` 显示 `live healthz: ✗`：
+
+- 端口被占：`lsof -i :17666` 看谁占了。`.env` 加
+  `AGENT_CONNECT_HTTP_PORT=17777`，`agc stop && agc start --daemon`。
+- token 没配：再查 `~/.agent-connect/.env`（变量名必须是
+  `TELEGRAM_BOT_TOKEN`）。
+- crash：`agc logs` 往上翻 50 行。
+
+### 4. 建群 + 首条消息
+
+1. Telegram → 新建群 → 加 bot 进群 → 群设置开 **Topics** → 把 bot
+   设为 **admin**，并给"管理话题"权限。
+2. 创建一个 topic（随便起名），发任意消息（比如 `hi`）。
+3. Bot 回一个目录浏览器。选目录 → 它会在那里起一个 tmux window +
+   Claude/Codex 会话。
+4. 之后这个 topic 的消息都路由到那个 agent，输出（status spinner、
+   中间动作、最终答案）实时流回 TG。
+
+### 常见坑
+
+| 现象 | 原因 | 修 |
+| --- | --- | --- |
+| Bot 完全不回 | 你的 id 不在 `TELEGRAM_ALLOWED_USERS` 里 | DM @userinfobot 再确认 |
+| 目录浏览器出来了但选了没反应 | Bot 不是群管理员 | 群设置把 bot 设管理员 |
+| Topic 一直叫 "New Topic" | Bot 没有"管理话题"权限 | 同上，admin + Manage Topics |
+| Claude/Codex 在跑但 TG 看不到 `Thinking…` | Hook 没 fire，因为 `agc` 不在 agent 进程的 PATH 里 | 重启 Claude / Codex；持续就 `AGENT_CONNECT_HOOK_COMMAND=/绝对路径/agc agc hook --install` |
+| `agc status` 重启后显示 `unreachable` | daemon crash 了 | `agc logs` 看最后 50 行 |
+
+### 跑起来后常用命令
+
+```bash
+agc status                  # uptime / restart count / healthz
+agc logs                    # tail 今天的日志
+agc restart                 # 重载 server 代码（supervisor 不动）
+agc stop                    # 优雅 shutdown
+agc send /tmp/foo.zip       # 把本地文件（≤50MB）发到当前 tmux
+                            # window 绑定的 topic
+```
+
+Web 管理控制台：**http://127.0.0.1:17666/**（端口跟
+`AGENT_CONNECT_HTTP_PORT` 走）。用它加第二个 bot、改 bot 设置、
+看活跃会话。
 
 ## 启动
 

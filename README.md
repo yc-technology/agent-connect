@@ -19,11 +19,93 @@ to that same terminal session.
 ## Requirements
 
 - Node.js 22+
-- pnpm 10.6.3+
+- pnpm 10.6.3+ (only for monorepo development; not needed for `npm i -g`)
 - tmux
 - Claude Code (`claude`) and/or Codex (`codex`) available in PATH
 
-## Install And Run
+## Quick Start (npm install)
+
+If you just ran `npm i -g @yc-tech/agent-connect-cli`, work through
+these steps in order. Hand this section to your Claude / Codex if you
+want them to walk you through it.
+
+### 1. Create the Telegram bot
+
+1. Open [@BotFather](https://t.me/BotFather), `/newbot`, follow the
+   prompts — copy the token it returns (`1234567890:AB...`).
+2. **Important**: open the bot's mini-app via BotFather's profile →
+   **Settings → Bot Settings → Threaded Mode → Enable**. Without this,
+   topic creation silently fails later.
+
+### 2. Set env vars
+
+```bash
+mkdir -p ~/.agent-connect
+cat >> ~/.agent-connect/.env <<EOF
+TELEGRAM_BOT_TOKEN=<paste your token>
+TELEGRAM_ALLOWED_USERS=<your numeric Telegram id>
+EOF
+chmod 600 ~/.agent-connect/.env
+```
+
+Get your numeric Telegram ID by DM'ing
+[@userinfobot](https://t.me/userinfobot). Multiple IDs: comma-separated,
+no spaces. **Without `TELEGRAM_ALLOWED_USERS`, anyone who finds the bot
+can talk to it.**
+
+### 3. Start the daemon + install hooks
+
+```bash
+agc start --daemon       # spawns detached supervisor + server
+agc status               # should print "live healthz: 200 ✓"
+agc hook --install       # wires Claude Code + Codex hooks
+```
+
+If `agc status` reports `live healthz: ✗`:
+
+- Port clash: `lsof -i :17666` — pick another with
+  `AGENT_CONNECT_HTTP_PORT=17777` in `.env`, then `agc stop && agc start --daemon`.
+- Missing token: re-check `~/.agent-connect/.env` (the var name must be
+  exactly `TELEGRAM_BOT_TOKEN`).
+- Crash: `agc logs` and scroll back.
+
+### 4. Create the Telegram group + first message
+
+1. In Telegram → New Group → add the bot → enable **Topics** in group
+   settings → promote the bot to **admin** with "Manage Topics"
+   permission.
+2. Create a topic (any name), send any message (e.g. `hi`).
+3. The bot replies with a directory browser. Pick a directory → it
+   launches a tmux window + Claude/Codex session there.
+4. Subsequent messages in the topic route to that agent; its output
+   (status spinner, intermediate work, final answer) streams back.
+
+### Common gotchas
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Bot ignores your message | Your user id isn't in `TELEGRAM_ALLOWED_USERS` | DM @userinfobot to check |
+| Directory browser appears but picking nothing happens | Bot is not group admin | Group settings → promote bot |
+| Topic stays "New Topic" forever | Bot lacks "Manage Topics" admin permission | Same — admin + Manage Topics |
+| Claude/Codex runs but Telegram shows no `Thinking…` | Hook didn't fire because `agc` isn't on the agent process's PATH | Restart Claude / Codex; if persistent, `AGENT_CONNECT_HOOK_COMMAND=/absolute/path/to/agc agc hook --install` |
+| `agc status` says `unreachable` after restart | Daemon crashed; `agc logs` last ~50 lines |
+
+### Useful commands once it's running
+
+```bash
+agc status                  # uptime / restart count / healthz
+agc logs                    # tail today's log
+agc restart                 # reload server code (supervisor stays up)
+agc stop                    # graceful shutdown
+agc send /tmp/foo.zip       # send a local file (≤50MB) to the topic
+                            # bound to the current tmux window
+```
+
+Web admin console: **http://127.0.0.1:17666/** (port matches
+`AGENT_CONNECT_HTTP_PORT`). Use it to add a second bot, toggle
+per-bot settings, or browse active sessions.
+
+## Install And Run (monorepo development)
 
 ```bash
 pnpm install

@@ -35,11 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - New skill `agc-send-file`: tells Claude / Codex to call
   `agc send <path>` instead of trying to base64-encode binaries when
   the user asks for a file.
-- New skill `agent-connect-setup`: step-by-step setup + debug guide
-  the user's agent can walk through after `npm i -g
-  @yc-tech/agent-connect-cli`. Covers BotFather, threaded mode,
-  ALLOWED_USERS, daemon start, hook install, first message test,
-  and common failure modes with the exact log greps to diagnose them.
+
+### 📖 Docs
+
+- README now has a **Quick Start (npm install)** section that walks new
+  users from `npm i -g @yc-tech/agent-connect-cli` through first
+  end-to-end message, with a common-gotchas table. Suitable for handing
+  to a Claude / Codex session — agents reading the README can guide
+  the user through setup directly (skill-based onboarding was
+  considered but rejected: skills don't auto-install until after the
+  daemon runs once, so they'd be invisible during the very moment
+  they're needed). README_CN.md mirrors the same section.
 
 ### 🐛 Fixed — parseStatusLine walks past Claude telemetry prompts
 

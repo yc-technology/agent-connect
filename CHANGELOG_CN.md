@@ -31,10 +31,15 @@ English: [CHANGELOG.md](./CHANGELOG.md).
   比对，无变化时静默；安装失败不会阻塞 bot 启动。
 - 新 skill `agc-send-file`：告诉 Claude / Codex 用户要文件时直接调
   `agc send <path>`，别去 base64 编码二进制。
-- 新 skill `agent-connect-setup`：用户 `npm i -g
-  @yc-tech/agent-connect-cli` 之后，让他们的 agent 一步步带着走的
-  setup + 调试指引。覆盖 BotFather、Threaded Mode、ALLOWED_USERS、
-  daemon 启动、hook 安装、首次消息测试，以及常见故障的日志定位命令。
+
+### 📖 文档
+
+- README 新增 **Quick Start (npm install)** / **快速开始（npm 安装）**
+  章节，从 `npm i -g @yc-tech/agent-connect-cli` 一路带到第一条端到端
+  消息，附常见坑表。可以直接发给 Claude / Codex —— agent 读 README
+  就能带用户走完整个 setup（一开始考虑做 skill，但 skill 要 daemon 起
+  来一次之后才会装到 ~/.claude/skills，新装用户那一刻找不到 skill，
+  所以放 README 才对）。README_CN.md 同步。
 
 ### 🐛 修复 — parseStatusLine 跳过 Claude 遥测提示行
 
