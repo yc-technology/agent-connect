@@ -9,6 +9,51 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.0 — 2026-05-21
+
+### ✨ 新增 — `agc send <path>` 外发文件能力
+
+- 新 CLI 子命令：`agc send /tmp/build.zip [--caption "..."]` 把本地文件
+  （上限 50 MB）以**不压缩**的方式作为 Telegram document 发到当前 tmux
+  window 绑定的 topic。走 bot 的 message queue，跟 transcript drain
+  公平竞争；默认 caption 是 `📎 <filename> (<size>)`。
+- 新 HTTP endpoint `POST /bot/send-file`（body: `{ path, windowId,
+  tmuxSession, caption? }`）。校验失败返回 400/404/413；全部投递失败
+  返回 502；部分成功返回 200 + `{ deliveries, failed }`。
+- Server 现在**等待** message-queue drain 完成后再响应 —— CLI 不再
+  在 TG 挂掉/被 429 限流时撒谎说"已发送"。
+
+### ✨ 新增 — 内置 skill 自动安装到 ~/.claude & ~/.codex
+
+- `apps/bot/skills/<name>/**` 整个目录树随 npm 包发布（位于
+  `dist/skills/`），bot service 每次启动**递归**同步到
+  `~/.claude/skills/<name>/` 和 `~/.codex/skills/<name>/`。逐文件字节
+  比对，无变化时静默；安装失败不会阻塞 bot 启动。
+- 新 skill `agc-send-file`：告诉 Claude / Codex 用户要文件时直接调
+  `agc send <path>`，别去 base64 编码二进制。
+- 新 skill `agent-connect-setup`：用户 `npm i -g
+  @yc-tech/agent-connect-cli` 之后，让他们的 agent 一步步带着走的
+  setup + 调试指引。覆盖 BotFather、Threaded Mode、ALLOWED_USERS、
+  daemon 启动、hook 安装、首次消息测试，以及常见故障的日志定位命令。
+
+### 🐛 修复 — parseStatusLine 跳过 Claude 遥测提示行
+
+- walk-back 现在跳过以 `⏺`（U+23FA，RECORD-CIRCLE）开头的行 ——
+  Claude 的 "Can Anthropic look at your session transcript?" 提示用
+  的就是这个字符，之前会让 walk-back 早早终止，导致整个计算过程
+  TG 上只看到 `Thinking…`，看不到实时的 `Hashing… (3m 21s ↓ 9.1k
+  tokens)` 之类的动态。之前 `●`（U+25CF）的 skip 规则只覆盖"How
+  is Claude doing this session?" 评分提示，没盖到这个 codepoint。
+
+### 🔧 内部
+
+- `ToolResultImage` 加了可选 `filename` 字段，调用方可以覆盖
+  `image.bin` 那种合成名（`agc send` 用这个保留真实 basename）。
+- 测试：+12 个 case（8 dispatcher + 1 queue-filename + 3 parser/skills）。
+  357 个全部通过。
+
+---
+
 ## 0.2.1 — 2026-05-19
 
 ### 🐛 修复

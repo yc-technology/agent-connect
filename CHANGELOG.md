@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.0 — 2026-05-21
+
+### ✨ Added — `agc send <path>` outbound file delivery
+
+- New CLI subcommand: `agc send /tmp/build.zip [--caption "..."]` sends
+  a local file (up to 50 MB) as an uncompressed Telegram document to the
+  topic bound to the caller's tmux window. Uses the running bot's
+  message queue so the upload competes fairly with normal transcript
+  drains; default caption is `📎 <filename> (<size>)`.
+- New HTTP endpoint `POST /bot/send-file` (body: `{ path, windowId,
+  tmuxSession, caption? }`) backing the CLI. Returns 400 / 404 / 413
+  for validation failures; 502 when all delivery attempts fail; 200
+  with `{ deliveries, failed }` for partial success.
+- Server now AWAITS message-queue drains before responding, so the CLI
+  no longer reports "sent" when Telegram is down or 429-exhausted.
+
+### ✨ Added — bundled skills auto-install into ~/.claude & ~/.codex
+
+- `apps/bot/skills/<name>/**` directory trees ship inside the npm
+  package (under `dist/skills/`) and are recursively synced into
+  `~/.claude/skills/<name>/` and `~/.codex/skills/<name>/` on every
+  bot service startup. Per-file byte compare, silent on no-op,
+  best-effort (a failed install never blocks startup).
+- New skill `agc-send-file`: tells Claude / Codex to call
+  `agc send <path>` instead of trying to base64-encode binaries when
+  the user asks for a file.
+- New skill `agent-connect-setup`: step-by-step setup + debug guide
+  the user's agent can walk through after `npm i -g
+  @yc-tech/agent-connect-cli`. Covers BotFather, threaded mode,
+  ALLOWED_USERS, daemon start, hook install, first message test,
+  and common failure modes with the exact log greps to diagnose them.
+
+### 🐛 Fixed — parseStatusLine walks past Claude telemetry prompts
+
+- Walk-back now skips lines prefixed with `⏺` (U+23FA, RECORD-CIRCLE) —
+  Claude's "Can Anthropic look at your session transcript?" prompt
+  uses this glyph and was terminating walk-back early, so the bot
+  would show a stuck `Thinking…` for the whole compute instead of the
+  live spinner text (`Hashing… (3m 21s ↓ 9.1k tokens)`). The previous
+  `●` (U+25CF) skip rule for the "How is Claude doing this session?"
+  rating prompt didn't cover this codepoint.
+
+### 🔧 Internal
+
+- `ToolResultImage` gained an optional `filename` field so callers can
+  override the synthesized `image.bin`-style fallback (used by the
+  new `agc send` path to surface the real basename).
+- Tests: +12 cases (8 dispatcher + 1 queue-filename + 3 parser/skills).
+  357 total, all passing.
+
+---
+
 ## 0.2.1 — 2026-05-19
 
 ### 🐛 Fixed
