@@ -417,9 +417,10 @@ describe("SessionManager registry dual-write", () => {
     const upserts: Array<[string, string, string]> = [];
     const binds: Array<[number, number, string]> = [];
     const unbinds: Array<[number, number]> = [];
+    const markedForRecovery: Array<[number, number]> = [];
     const groupChats: Array<[number, number, number]> = [];
     return {
-      calls: { upserts, binds, unbinds, groupChats },
+      calls: { upserts, binds, unbinds, markedForRecovery, groupChats },
       getSessionByWindow: () => null,
       getLastEvent: () => null,
       upsertWindow: (windowId: string, displayName: string, cwd: string) => {
@@ -431,6 +432,9 @@ describe("SessionManager registry dual-write", () => {
       unbindThread: (userId: number, threadId: number) => {
         unbinds.push([userId, threadId]);
         return null;
+      },
+      markBindingForRecovery: (userId: number, threadId: number) => {
+        markedForRecovery.push([userId, threadId]);
       },
       setGroupChatId: (userId: number, threadId: number, chatId: number) => {
         groupChats.push([userId, threadId, chatId]);
@@ -526,6 +530,56 @@ describe("SessionManager registry dual-write", () => {
       expect(() => mgr.bindThread(100, 42, "@5")).not.toThrow();
       expect(() => mgr.unbindThread(100, 42)).not.toThrow();
       expect(() => mgr.setGroupChatId(100, 42, -1)).not.toThrow();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("markBindingForRecovery removes the in-memory binding AND forwards to registry", () => {
+    // Codex review test gap: existing tests only stubbed markBindingForRecovery
+    // on the registry side. This verifies the SessionManager-level dual write —
+    // the in-memory threadBindings entry must be removed so live routing
+    // (getWindowForThread) treats the topic as detached.
+    const dir = tmpDir();
+    try {
+      const registry = fakeRegistry();
+      const mgr = makeManagerWithRegistry(dir, registry);
+      mgr.bindThread(100, 42, "@5");
+      expect(mgr.getWindowForThread(100, 42)).toBe("@5");
+
+      const returned = mgr.markBindingForRecovery(100, 42);
+
+      expect(returned).toBe("@5");
+      expect(mgr.getWindowForThread(100, 42)).toBeNull();
+      expect(registry.calls.markedForRecovery).toEqual([[100, 42]]);
+      // Hard-delete path is untouched — markBindingForRecovery must NOT call
+      // unbindThread (the binding row must survive in the registry).
+      expect(registry.calls.unbinds).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("hydrateFromRegistry tolerates a registry whose iterThreadBindings filters out NULL window_id rows", () => {
+    // Codex review HIGH: previously the registry returned NULL window_id for
+    // recovery_pending rows, hydrateFromRegistry wrote them into the in-memory
+    // map, and resolveStaleIds crashed calling .startsWith on null. The fix is
+    // on the registry side (iterThreadBindings WHERE window_id IS NOT NULL).
+    // This test pins that contract: SessionManager.hydrateFromRegistry must
+    // not crash if the registry only emits real window IDs.
+    const dir = tmpDir();
+    try {
+      const mgr = makeManagerWithRegistry(dir);
+      const registry = {
+        listLiveWindows: () => [{ window_id: "@5", display_name: "alive", cwd: "/work" }],
+        // Real registry filters NULL window_id; nothing yielded here.
+        iterThreadBindings: function* (): IterableIterator<[number, number, string]> {},
+        resolveChatId: (userId: number) => userId,
+        getTopicProbeMessageId: () => null,
+        getUserWindowOffset: () => null
+      };
+      expect(() => mgr.hydrateFromRegistry(registry)).not.toThrow();
+      expect(mgr.getWindowForThread(100, 42)).toBeNull();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

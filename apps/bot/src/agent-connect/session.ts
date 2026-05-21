@@ -77,6 +77,8 @@ export interface SessionRegistryLike {
   upsertWindow(windowId: string, displayName: string, cwd: string): void;
   bindThread(userId: number, threadId: number, windowId: string): void;
   unbindThread(userId: number, threadId: number): string | null;
+  markBindingForRecovery(userId: number, threadId: number): void;
+  getRecoveryAnchor?(userId: number, threadId: number): string | null;
   setGroupChatId(userId: number, threadId: number, chatId: number): void;
 }
 
@@ -644,6 +646,27 @@ export class SessionManager {
     return windowId;
   }
 
+  // Soft path for "the window vanished from tmux but the topic is still
+  // valid" — keep the DB binding row (so last_session_id is available to the
+  // /join resume picker) but remove the live in-memory binding so routing
+  // (getWindowForThread / findUsersForWindow) correctly reports the topic as
+  // detached. The user re-/joining will go through bindThread which clears
+  // recovery_pending on the same row.
+  markBindingForRecovery(userId: number, threadId: number): string | null {
+    const bindings = this.threadBindings[userId];
+    if (!bindings || !(threadId in bindings)) return null;
+    const windowId = bindings[threadId] ?? null;
+    delete bindings[threadId];
+    if (Object.keys(bindings).length === 0) delete this.threadBindings[userId];
+    this.options.registry?.markBindingForRecovery(userId, threadId);
+    this.saveState();
+    logger().info(
+      { userId, threadId, windowId },
+      "session marked for recovery: window vanished, anchor preserved"
+    );
+    return windowId;
+  }
+
   getWindowForThread(userId: number, threadId: number): string | null {
     return this.threadBindings[userId]?.[threadId] ?? null;
   }
@@ -651,6 +674,14 @@ export class SessionManager {
   resolveWindowForThread(userId: number, threadId: number | null): string | null {
     if (threadId === null) return null;
     return this.getWindowForThread(userId, threadId);
+  }
+
+  // Recovery anchor for the /join resume picker: returns the session_id this
+  // topic was last bound to, ONLY if the binding is currently in
+  // recovery_pending (= the bound tmux window vanished and the user hasn't
+  // re-attached yet). Returns null once they re-/join.
+  getRecoveryAnchor(userId: number, threadId: number): string | null {
+    return this.options.registry?.getRecoveryAnchor?.(userId, threadId) ?? null;
   }
 
   *iterThreadBindings(): IterableIterator<[number, number, string]> {

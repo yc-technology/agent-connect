@@ -95,3 +95,43 @@ describe("directory browser", () => {
     expect(userData).toEqual({ [UNBOUND_WINDOWS_KEY]: ["@1"] });
   });
 });
+
+describe("buildSessionPicker recovery highlight", () => {
+  const sessions = [
+    { sessionId: "sess-aaa", summary: "first task", messageCount: 12, filePath: "/tmp/a.jsonl" },
+    { sessionId: "sess-bbb", summary: "second task", messageCount: 7, filePath: "/tmp/b.jsonl" },
+    { sessionId: "sess-ccc", summary: "third task", messageCount: 3, filePath: "/tmp/c.jsonl" }
+  ];
+
+  it("renders no marker when recommendedSessionId is omitted", () => {
+    const picker = buildSessionPicker(sessions);
+    expect(picker.text).not.toContain("★");
+    expect(picker.text).not.toContain("(previous)");
+    // Default ▶ on every button.
+    const labels = picker.keyboard.inline_keyboard
+      .flat()
+      .map((b) => (b as { text?: string }).text ?? "");
+    expect(labels.filter((l) => l.startsWith("▶ ")).length).toBe(sessions.length);
+    expect(labels.filter((l) => l.startsWith("★ ")).length).toBe(0);
+  });
+
+  it("prefixes ★ on the matched row + tags '(previous)' in the list", () => {
+    const picker = buildSessionPicker(sessions, { recommendedSessionId: "sess-bbb" });
+    // Exactly one row gets the recovery marker.
+    expect(picker.text.match(/★ /g)?.length).toBe(1);
+    expect(picker.text).toContain("★ 2. second task");
+    expect(picker.text).toContain("_(previous)_");
+    // Only the matched row's button gets ★; others stay ▶.
+    const labels = picker.keyboard.inline_keyboard
+      .flat()
+      .map((b) => (b as { text?: string }).text ?? "");
+    expect(labels.filter((l) => l.startsWith("★ ")).length).toBe(1);
+    expect(labels.find((l) => l.startsWith("★ "))).toContain("second task");
+  });
+
+  it("non-matching recommendedSessionId leaves all rows as default ▶", () => {
+    const picker = buildSessionPicker(sessions, { recommendedSessionId: "sess-zzz" });
+    expect(picker.text).not.toContain("★");
+    expect(picker.text).not.toContain("(previous)");
+  });
+});

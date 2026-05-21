@@ -25,6 +25,25 @@ export interface TmuxWindow {
   paneCurrentCommand: string;
 }
 
+/**
+ * Authoritative result of asking tmux for the list of windows in our session.
+ *
+ * `ok: false` is NOT the same as `windows: []`. The latter means "tmux is up,
+ * session exists, just no windows except the main one we filter out"; the
+ * former means we could not get an authoritative answer at all (server
+ * unreachable / session vanished / exec error). Callers that base destructive
+ * actions on absence — see statusPolling.ts cleanupTopicBinding — must check
+ * `ok` first, otherwise a transient tmux outage looks identical to "all
+ * windows died" and silently wipes the bot DB via FK CASCADE.
+ */
+export type ListWindowsResult =
+  | { ok: true; windows: TmuxWindow[] }
+  | {
+      ok: false;
+      reason: "tmux-unreachable" | "session-missing" | "exec-failed";
+      detail: string;
+    };
+
 export interface CreateWindowOptions {
   windowName?: string | null;
   startClaude?: boolean;
@@ -64,7 +83,7 @@ export class TmuxManager {
     await this.scrubSessionEnv();
   }
 
-  async listWindows(): Promise<TmuxWindow[]> {
+  async listWindowsAuthoritative(): Promise<ListWindowsResult> {
     const format = [
       "#{window_id}",
       "#{window_name}",
@@ -79,9 +98,23 @@ export class TmuxManager {
       format
     ], { rejectOnError: false });
 
-    if (result.code !== 0) return [];
+    if (result.code !== 0) {
+      const stderr = result.stderr.trim();
+      const lower = stderr.toLowerCase();
+      let reason: "tmux-unreachable" | "session-missing" | "exec-failed" = "exec-failed";
+      if (lower.includes("no server running") || lower.includes("error connecting")) {
+        reason = "tmux-unreachable";
+      } else if (lower.includes("can't find session") || lower.includes("session not found")) {
+        reason = "session-missing";
+      }
+      return {
+        ok: false,
+        reason,
+        detail: stderr || `tmux list-windows exit ${result.code}`
+      };
+    }
 
-    return result.stdout
+    const windows = result.stdout
       .split(/\r?\n/)
       .filter(Boolean)
       .map((line) => {
@@ -90,6 +123,18 @@ export class TmuxManager {
         return { windowId, windowName, cwd, paneCurrentCommand };
       })
       .filter((window) => window.windowName !== this.config.tmuxMainWindowName);
+
+    return { ok: true, windows };
+  }
+
+  // Convenience wrapper kept for user-triggered paths (commands, REST handlers)
+  // that just want a list and treat any failure as "nothing to show". Hot paths
+  // like statusPolling.tick MUST call listWindowsAuthoritative directly so they
+  // can distinguish "tmux is down" from "session has no windows" before doing
+  // anything destructive.
+  async listWindows(): Promise<TmuxWindow[]> {
+    const result = await this.listWindowsAuthoritative();
+    return result.ok ? result.windows : [];
   }
 
   async findWindowById(windowId: string): Promise<TmuxWindow | null> {

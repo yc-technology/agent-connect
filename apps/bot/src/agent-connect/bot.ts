@@ -863,6 +863,7 @@ export async function pickerCallbackHandler(
     | "getWindowState"
     | "saveState"
     | "sendToWindow"
+    | "getRecoveryAnchor"
   > &
     Partial<Pick<SessionManager, "setTopicProbeMessageId">>,
   tmuxManager: Pick<TmuxManager, "findWindowById" | "createWindow">,
@@ -1066,6 +1067,7 @@ export function registerBotHandlers(
     | "updateDisplayName"
     | "getSessionByWindow"
     | "getLastEvent"
+    | "getRecoveryAnchor"
   >,
   tmuxManager: Pick<
     TmuxManager,
@@ -1133,6 +1135,7 @@ export function createTelegramBot(
     | "updateDisplayName"
     | "getSessionByWindow"
     | "getLastEvent"
+    | "getRecoveryAnchor"
   >,
   tmuxManager: Pick<
     TmuxManager,
@@ -1404,6 +1407,7 @@ async function handleDirectoryConfirmCallback(
     | "getWindowState"
     | "saveState"
     | "sendToWindow"
+    | "getRecoveryAnchor"
   >,
   tmuxManager: Pick<TmuxManager, "createWindow">
 ): Promise<void> {
@@ -1421,7 +1425,11 @@ async function handleDirectoryConfirmCallback(
     userData[STATE_KEY] = STATE_SELECTING_SESSION;
     userData[SESSIONS_KEY] = sessions;
     userData[SELECTED_PATH_KEY] = selectedPath;
-    const picker = buildSessionPicker(sessions);
+    // If this topic was previously bound to a Claude/Codex session whose tmux
+    // window has since vanished (statusPolling soft-cleanup), default-highlight
+    // that session in the picker so the user can resume in one tap.
+    const anchor = threadId !== null ? sessionManager.getRecoveryAnchor(userId, threadId) : null;
+    const picker = buildSessionPicker(sessions, anchor ? { recommendedSessionId: anchor } : {});
     await editTextWithFallback(ctx, picker.text, { reply_markup: picker.keyboard });
     await ctx.answerCallbackQuery();
     return;

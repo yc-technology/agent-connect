@@ -163,16 +163,27 @@ export function buildDirectoryBrowser(
   };
 }
 
+export interface SessionPickerOptions extends DirectoryBrowserOptions {
+  // When the topic has a recovery anchor (last_session_id from a prior bound
+  // session whose tmux window vanished), pass it here. The matching session
+  // row gets a ★ marker + "(previous)" label and its button is prefixed too,
+  // so the user can hit Enter on the obvious default instead of guessing.
+  recommendedSessionId?: string;
+}
+
 export function buildSessionPicker(
   sessions: ClaudeSession[],
-  options: DirectoryBrowserOptions = {}
+  options: SessionPickerOptions = {}
 ): { text: string; keyboard: InlineKeyboard } {
+  const recommended = options.recommendedSessionId ?? null;
   const lines = ["**Resume Session?**\n", "Existing sessions found in this directory.\n"];
   for (const [index, session] of sessions.entries()) {
     const summary = session.summary.length > 40 ? `${session.summary.slice(0, 40)}…` : session.summary;
     const rel = relativeTime(session.filePath, options.nowMs);
     const timeText = rel ? ` (${rel})` : "";
-    lines.push(`${index + 1}. ${summary} — ${session.messageCount} msgs${timeText}`);
+    const marker = recommended && session.sessionId === recommended ? "★ " : "";
+    const tag = recommended && session.sessionId === recommended ? " _(previous)_" : "";
+    lines.push(`${marker}${index + 1}. ${summary} — ${session.messageCount} msgs${timeText}${tag}`);
   }
 
   const rows: InlineButton[][] = [];
@@ -180,7 +191,9 @@ export function buildSessionPicker(
     const row: InlineButton[] = [];
     for (let j = 0; j < Math.min(2, sessions.length - i); j += 1) {
       const session = sessions[i + j]!;
-      row.push(InlineKeyboard.text(`▶ ${truncateLabel(session.summary, 15)}`, `${CB_SESSION_SELECT}${i + j}`));
+      const isRecommended = recommended && session.sessionId === recommended;
+      const prefix = isRecommended ? "★ " : "▶ ";
+      row.push(InlineKeyboard.text(`${prefix}${truncateLabel(session.summary, 15)}`, `${CB_SESSION_SELECT}${i + j}`));
     }
     rows.push(row);
   }

@@ -908,7 +908,8 @@ describe("bot text and picker flow", () => {
         waitForSessionMapEntry: vi.fn(),
         getWindowState: vi.fn(),
         saveState: vi.fn(),
-        sendToWindow
+        sendToWindow,
+        getRecoveryAnchor: vi.fn(() => null)
       },
       {
         findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
@@ -953,7 +954,8 @@ describe("bot text and picker flow", () => {
         waitForSessionMapEntry: vi.fn(),
         getWindowState: vi.fn(),
         saveState: vi.fn(),
-        sendToWindow
+        sendToWindow,
+        getRecoveryAnchor: vi.fn(() => null)
       },
       {
         findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
@@ -1003,7 +1005,8 @@ describe("bot text and picker flow", () => {
         waitForSessionMapEntry: vi.fn(async () => true),
         getWindowState: vi.fn(),
         saveState: vi.fn(),
-        sendToWindow
+        sendToWindow,
+        getRecoveryAnchor: vi.fn(() => null)
       },
       {
         findWindowById: vi.fn(),
@@ -1057,7 +1060,8 @@ describe("bot text and picker flow", () => {
         waitForSessionMapEntry: vi.fn(async () => true),
         getWindowState: vi.fn(() => new WindowState()),
         saveState: vi.fn(),
-        sendToWindow
+        sendToWindow,
+        getRecoveryAnchor: vi.fn(() => null)
       },
       {
         findWindowById: vi.fn(),
