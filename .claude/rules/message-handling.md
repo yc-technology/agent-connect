@@ -32,7 +32,7 @@ Per-user message queues + worker pattern for all send tasks:
 
 ## Performance Characteristics
 
-**Event-driven, not polled.** Transcript reads are triggered by hook events (`SessionStart`, `PostToolUse`, `PostToolBatch`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `SessionEnd`). `drainTranscript` reads only `[last_byte_offset, file_size)` for the session named by the hook payload — no mtime cache, no directory scan.
+**Event-driven, not polled.** Transcript reads are triggered by hook events (`SessionStart`, `PostToolUse`, `PostToolBatch`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `SessionEnd`). `StopFailure` additionally surfaces the upstream API error (`error_type` + `error_message`) to Telegram so a failed /compact doesn't leave a stuck "Compacting…" status line. `drainTranscript` reads only `[last_byte_offset, file_size)` for the session named by the hook payload — no mtime cache, no directory scan.
 
 **Per-session serialization.** `SessionRegistry.withSessionLock(sessionId, fn)` ensures only one drain per session runs at a time; concurrent events for the same session queue, then re-check `last_byte_offset` so the second caller is a cheap no-op. Different sessions drain in parallel.
 

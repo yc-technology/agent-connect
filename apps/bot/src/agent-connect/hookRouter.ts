@@ -102,6 +102,18 @@ export class HookRouter {
         await this.onDrain(envelope);
         await this.fireTurnEnd(envelope, "success");
         return;
+      case "StopFailure":
+        // Turn ended due to an API error (rate_limit / server_error /
+        // billing / …). Without this branch the user would see a stale
+        // status line — e.g. "Compacting conversation… 1%" — forever,
+        // because the failing spinner just vanishes from the pane and
+        // parseStatusLine returns null. Drain first (any partial output
+        // that landed before the error should still be delivered), surface
+        // the failure to Telegram, then mark the turn as ended.
+        await this.onDrain(envelope);
+        await this.fireStopFailure(envelope);
+        await this.fireTurnEnd(envelope, "failure");
+        return;
       case "PostToolUseFailure":
         return this.onDrain(envelope);
       case "PermissionRequest":
@@ -140,6 +152,31 @@ export class HookRouter {
       await this.deps.onStatusEvent(envelope.window_id, `⚠️ Approval needed: ${summary}`);
     } catch (err) {
       logger().warn({ ...envelopeCtx(envelope), err }, "hookRouter onStatusEvent callback failed");
+    }
+  }
+
+  /**
+   * StopFailure → user-facing Telegram message. We reuse onStatusEvent (same
+   * channel as PermissionRequest) so the existing status-message editor
+   * naturally OVERWRITES whatever stale spinner text was last shown — this is
+   * the whole reason the hook was added: a /compact 500 left "Compacting… 1%"
+   * stuck in Telegram because the pane spinner just disappeared with no
+   * completion signal.
+   */
+  private async fireStopFailure(envelope: HookEnvelope): Promise<void> {
+    if (!this.deps.onStatusEvent) return;
+    const errorType =
+      typeof envelope.payload.error_type === "string" ? envelope.payload.error_type : "unknown";
+    const errorMessage =
+      typeof envelope.payload.error_message === "string" ? envelope.payload.error_message.trim() : "";
+    const detail = errorMessage ? ` — ${errorMessage}` : "";
+    try {
+      await this.deps.onStatusEvent(envelope.window_id, `❌ Turn failed (${errorType})${detail}`);
+    } catch (err) {
+      logger().warn(
+        { ...envelopeCtx(envelope), err },
+        "hookRouter onStatusEvent callback failed (StopFailure)"
+      );
     }
   }
 

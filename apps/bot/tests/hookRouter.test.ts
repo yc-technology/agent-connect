@@ -697,3 +697,126 @@ describe("HookRouter per-window queue", () => {
     expect(registry.getSession("B")).not.toBeNull();
   });
 });
+
+describe("HookRouter StopFailure", () => {
+  // The whole reason this event exists: a /compact 500 leaves the user
+  // staring at "Compacting conversation… 1%" forever because the spinner
+  // just vanishes from the pane with no completion marker. Routing it
+  // through onStatusEvent overwrites that stale status with the actual
+  // error.
+  test("fires onStatusEvent with error_type + error_message", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: Array<{ windowId: string; text: string }> = [];
+    const outcomes: Array<{ windowId: string; outcome: string }> = [];
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "claude",
+      onStatusEvent: async (windowId, text) => {
+        statuses.push({ windowId, text });
+      },
+      onTurnEnd: async (windowId, outcome) => {
+        outcomes.push({ windowId, outcome });
+      }
+    });
+    await router.dispatch(
+      envelope(
+        "StopFailure",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.claude/projects/p/r.jsonl",
+          cwd: "/work",
+          error_type: "server_error",
+          error_message: "API Error: 500 Internal server error. This is a server-side issue, usually temporary."
+        },
+        { window_id: "@4" }
+      )
+    );
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.windowId).toBe("@4");
+    expect(statuses[0]?.text).toContain("Turn failed");
+    expect(statuses[0]?.text).toContain("server_error");
+    expect(statuses[0]?.text).toContain("API Error: 500");
+    expect(outcomes).toEqual([{ windowId: "@4", outcome: "failure" }]);
+  });
+
+  test("StopFailure with NEITHER error_type nor error_message falls back to 'unknown'", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: Array<{ windowId: string; text: string }> = [];
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "claude",
+      onStatusEvent: async (windowId, text) => {
+        statuses.push({ windowId, text });
+      }
+    });
+    await router.dispatch(
+      envelope(
+        "StopFailure",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.claude/projects/p/r.jsonl",
+          cwd: "/work"
+        },
+        { window_id: "@4" }
+      )
+    );
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.text).toBe("❌ Turn failed (unknown)");
+  });
+
+  test("StopFailure with no error_message still surfaces error_type", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: Array<{ windowId: string; text: string }> = [];
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "claude",
+      onStatusEvent: async (windowId, text) => {
+        statuses.push({ windowId, text });
+      }
+    });
+    await router.dispatch(
+      envelope(
+        "StopFailure",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.claude/projects/p/r.jsonl",
+          cwd: "/work",
+          error_type: "rate_limit"
+        },
+        { window_id: "@4" }
+      )
+    );
+    expect(statuses[0]?.text).toContain("rate_limit");
+    // No trailing " — ..." dash when message is absent
+    expect(statuses[0]?.text).not.toContain(" — ");
+  });
+
+  test("foreign-agent StopFailure is filtered before onStatusEvent fires", async () => {
+    const registry = new SessionRegistry(inMemoryDb());
+    const statuses: unknown[] = [];
+    const router = new HookRouter({
+      registry,
+      dispatcher: async () => {},
+      agentType: "claude",
+      onStatusEvent: async (...args) => {
+        statuses.push(args);
+      }
+    });
+    await router.dispatch(
+      envelope(
+        "StopFailure",
+        {
+          session_id: "S",
+          transcript_path: "/Users/x/.codex/sessions/r.jsonl", // codex path
+          cwd: "/work",
+          error_type: "server_error"
+        },
+        { window_id: "@7" }
+      )
+    );
+    expect(statuses).toEqual([]);
+  });
+});

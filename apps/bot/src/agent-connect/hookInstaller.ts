@@ -16,6 +16,12 @@ const CLAUDE_HOOK_EVENTS = [
   "PostToolBatch",
   "PostToolUseFailure",
   "Stop",
+  // StopFailure fires when a turn ends due to an API error (rate_limit,
+  // server_error, billing_error, …). Used to surface compaction/turn errors
+  // to Telegram explicitly — otherwise the user sees a stuck status line
+  // (e.g. "Compacting conversation… 1%") because the spinner just vanishes
+  // from the pane without a completion marker. Codex doesn't emit this event.
+  "StopFailure",
   "Notification"
   // PermissionRequest deliberately omitted: Claude's TUI shows a clickable
   // prompt (handled by StatusPoller + interactiveUi via tmux pane matching),

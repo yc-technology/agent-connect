@@ -13,7 +13,7 @@ Telegram Forum Topic
 
 No polling. Every transcript read is triggered by a hook event (SessionStart,
 PostToolUse, PostToolBatch, PostToolUseFailure, UserPromptSubmit, Stop,
-SessionEnd). `StatusPoller` runs on its own 1s cadence purely for the TUI
+StopFailure, SessionEnd). `StatusPoller` runs on its own 1s cadence purely for the TUI
 status line (`Thinking… (Xs)`) and 60s topic probe.
 
 ## Workspace Modules
