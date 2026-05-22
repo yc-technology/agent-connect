@@ -9,6 +9,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.1 — 2026-05-22
+
+### 🐛 Fixed — tmux outage no longer wipes the bot DB
+
+After ~13 hours of running, the tmux server died (a known tmux 3.6a
+internal bug on macOS 26.2 Apple Silicon — see
+[tmux/tmux#4777](https://github.com/tmux/tmux/issues/4777)). The bot's
+next status-poll tick saw every binding's window missing,
+`cleanupTopicBinding` ran for all of them, and FK CASCADE wiped
+`sessions` + `thread_bindings` + `user_window_offsets` in one tick.
+Five topics lost their session anchors at once.
+
+- `tmuxManager.listWindowsAuthoritative()` returns a discriminated
+  union `{ok:true,windows} | {ok:false,reason}`. Server-unreachable,
+  session-missing, and exec-error now have distinct reasons rather
+  than collapsing into "empty list".
+- `statusPolling.tick` does ONE authoritative call per tick. On
+  `{ok:false}` → log + return without touching the binding loop.
+  Bindings survive the outage.
+- On `{ok:true}` the resolved window is plumbed down to
+  `updateStatusMessage`, dropping the second-lookup per binding
+  (exec rate goes from 3/binding/tick to 1+N/tick — ~5× fewer tmux
+  forks for the same workload).
+- Default poll interval bumped 1s → 2s. Override with
+  `AGENT_CONNECT_STATUS_POLL_INTERVAL_MS`.
+
+### ✨ Added — soft-delete bindings + resume picker default-highlight
+
+When a window does authoritatively disappear from tmux (server back
+but specific window gone), the binding is now **preserved** so the
+user can re-join and resume the same session in one tap.
+
+- Schema migration: `thread_bindings.window_id` is now nullable; FK
+  is `ON DELETE SET NULL` (was CASCADE); new column
+  `recovery_pending`. SQLite has no `ALTER COLUMN`, so the migration
+  uses the standard table-recreate dance inside a transaction.
+  Idempotent — guarded by PRAGMA shape check (column + nullable + FK
+  action all verified).
+- New column `last_session_id`: every `SessionStart` hook (incl.
+  `lazyRegisterIfMissing`) writes the session_id into the binding
+  row. Survives `/clear`, `/compact`, manual `--resume`, and
+  auto-recovery uniformly.
+- `markBindingForRecovery(userId, threadId)` clears `window_id` +
+  sets `recovery_pending=1`, then deletes the windows row so the FK
+  SET NULL fires. The binding row stays, last_session_id stays.
+- `buildSessionPicker` accepts `recommendedSessionId`. The matching
+  row gets a ★ prefix + "(previous)" tag in the markdown and ★ on
+  its button. `/join` flow looks up
+  `sessionManager.getRecoveryAnchor(userId, threadId)` and passes it
+  through, so users see the obvious default after a tmux restart.
+- On the `down → up` transition, statusPolling sends a Telegram
+  heads-up per recoverable thread: "tmux server was restarted. The
+  previous session for this topic (session xxxx) is preserved — send
+  any message in this topic to /join and resume it."
+
+### 🐛 Fixed — silent picker delivery failures
+
+`interactiveUi.ts` previously had a `catch { return false }` block
+that swallowed every Telegram error. A separate root cause: tmux's
+`capture-pane` defaults to capturing only the visible viewport (no
+scrollback). For tall AskUserQuestion pickers (verbose option
+descriptions), the `☐` top marker scrolled off-screen and the parser
+silently failed to match.
+
+- `capturePane` now passes `-S -200` so up to 200 lines of scrollback
+  are included. Tall pickers parse correctly.
+- `terminalParser.tryExtract` flipped to bottom-up scan: with
+  scrollback we can now see older dismissed pickers above the live
+  one, and a top-down scan would lock onto the stale one. Bottom-up
+  always picks the latest. Multi-line `top` patterns (e.g.
+  ResumeSummaryPrompt) still resolve correctly — each regex is
+  matched independently and the earliest hit is taken.
+- `interactiveUi` now logs the actual error on every silent-fail
+  path, throttled at 60s per (windowId, error class).
+
+### 🧹 Internal
+
+- `errorMessage(unknown): string` helper extracted to `utils.ts`
+  (dedup with `statusPolling.ts`); handles grammy's `.description`
+  field on Telegram API errors.
+- 27 new tests across `sessionRegistry` / `session` / `statusPolling`
+  / `directoryBrowser` / `terminalParser`; codex-flagged edge cases
+  pinned (NULL hydration, recovery_pending filter, migration shape
+  probe, multi-picker scrollback).
+
+---
+
 ## 0.3.0 — 2026-05-21
 
 ### ✨ Added — `agc send <path>` outbound file delivery

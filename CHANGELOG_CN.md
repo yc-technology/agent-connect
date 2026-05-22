@@ -9,6 +9,81 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.1 — 2026-05-22
+
+### 🐛 修复 — tmux 挂掉不再清空 bot DB
+
+跑了约 13 小时之后 tmux server 死了（tmux 3.6a 在 macOS 26.2 Apple
+Silicon 上的已知 bug，见 [tmux/tmux#4777](https://github.com/tmux/tmux/issues/4777)）。
+bot 下一 tick 看到所有 binding 的 window 全不见了，`cleanupTopicBinding`
+对每条都跑一遍，FK CASCADE 在一个 tick 内把 `sessions` /
+`thread_bindings` / `user_window_offsets` 全清掉。**5 个 topic 的 session
+锚点一次性丢失。**
+
+- `tmuxManager.listWindowsAuthoritative()` 返回判别联合
+  `{ok:true,windows} | {ok:false,reason}`。server 不可达、session 不存在、
+  exec 失败现在各有清晰 reason，不再塌缩成"空列表"。
+- `statusPolling.tick` 每个 tick 只调一次。`{ok:false}` → log + return，
+  **完全不进入** binding 循环。bindings 在 tmux 死期间得以保留。
+- `{ok:true}` 时把 resolved window 直接传给 `updateStatusMessage`，去掉
+  下游的重复 lookup（每 binding 每 tick 的 tmux exec 数从 3 → 1+N，**同
+  样负载下 fork 数减少约 5 倍**）。
+- Poll 间隔默认从 1s → 2s。可用 `AGENT_CONNECT_STATUS_POLL_INTERVAL_MS`
+  覆盖。
+
+### ✨ 新增 — 软删除 binding + resume picker 默认高亮上次 session
+
+当 window 确实从 tmux 消失时（server 回来但具体 window 没了），binding
+现在会**保留下来**，用户重新 /join 一下就能恢复到同一个 session。
+
+- schema 迁移：`thread_bindings.window_id` 可空；FK 改为
+  `ON DELETE SET NULL`（原本是 CASCADE）；新增 `recovery_pending` 列。
+  SQLite 不支持 `ALTER COLUMN`，所以走的是经典的表重建 dance，包在
+  单一事务里。幂等 —— 用 PRAGMA shape check 同时校验 column +
+  nullable + FK action 三处。
+- 新列 `last_session_id`：每次 `SessionStart` hook（含
+  `lazyRegisterIfMissing`）都把 session_id 写到 binding 行。`/clear` /
+  `/compact` / 手动 `--resume` / 自动恢复都统一覆盖。
+- `markBindingForRecovery(userId, threadId)` 清空 `window_id` + 把
+  `recovery_pending=1` 置上，然后删 windows 行触发 FK SET NULL。binding
+  行保留，last_session_id 保留。
+- `buildSessionPicker` 支持 `recommendedSessionId` 参数。匹配的那条
+  在 markdown 文本里加 ★ 前缀 + "(previous)" 标签，按钮也加 ★。`/join`
+  流程从 `sessionManager.getRecoveryAnchor(userId, threadId)` 拿锚点
+  传进去，tmux 重启后用户一眼就能看到默认选项。
+- 在 `down → up` 状态转换时，statusPolling 给每个 recoverable thread
+  发一条 Telegram 通知："tmux server was restarted. The previous
+  session for this topic (session xxxx) is preserved — send any message
+  in this topic to /join and resume it."
+
+### 🐛 修复 — picker 静默送不出去
+
+`interactiveUi.ts` 之前有个 `catch { return false }` 把所有 Telegram
+错误都吃掉。另一个独立根因：tmux 的 `capture-pane` 默认只抓可见
+viewport（无 scrollback）。AskUserQuestion 选项描述长的时候，picker 的
+`☐` 顶部标记被顶出可见区，解析器静默匹配失败。
+
+- `capturePane` 现在带 `-S -200`，拿 200 行 scrollback。高 picker 能
+  正确解析。
+- `terminalParser.tryExtract` 改为**从底向上扫**：带了 scrollback 之后
+  会同时看到旧 picker 残留和当前 picker，自上而下扫会锁到旧的。自下
+  而上保证总锁到最新的。多行 `top` pattern（如 ResumeSummaryPrompt）
+  仍正确处理 —— 对每条 regex 单独求最近匹配，再取最早的。
+- `interactiveUi` 在每个静默失败路径都打日志，按
+  (windowId, error class) 60s 节流避免刷屏。
+
+### 🧹 内部
+
+- `errorMessage(unknown): string` helper 抽到 `utils.ts`（和
+  `statusPolling.ts` 去重）；处理 grammy 在 Telegram API 错误上的
+  `.description` 字段。
+- 27 个新测试散落在 `sessionRegistry` / `session` / `statusPolling` /
+  `directoryBrowser` / `terminalParser`；锁定 codex 提的边角 case（NULL
+  hydration、recovery_pending 过滤、迁移 shape 校验、多 picker
+  scrollback）。
+
+---
+
 ## 0.3.0 — 2026-05-21
 
 ### ✨ 新增 — `agc send <path>` 外发文件能力
