@@ -70,7 +70,14 @@ export const CC_COMMANDS: Record<string, string> = {
   cost: "↗ Show token/cost usage",
   help: "↗ Show Claude Code help",
   memory: "↗ Edit CLAUDE.md",
-  model: "↗ Switch AI model"
+  model: "↗ Switch AI model",
+  // /resume forwards to Claude; its native TUI picker is the richest source
+  // of session metadata (title, last activity, tokens, branch). The picker
+  // surfaces through statusPolling → terminalParser ResumeSession pattern
+  // → interactiveUi inline keyboard, so no extra Telegram-side UI work.
+  // Only useful when the binding's window is alive — forwardCommandHandler
+  // detects recovery_pending and emits a redirect-to-/join message instead.
+  resume: "↗ Resume a Claude session"
 };
 
 export const BOT_COMMANDS = [
@@ -547,7 +554,7 @@ export async function forwardCommandHandler(
     SessionManager,
     "setGroupChatId" | "resolveWindowForThread" | "getDisplayName" | "sendToWindow" | "clearWindowSession"
   > &
-    Partial<Pick<SessionManager, "setTopicProbeMessageId">>,
+    Partial<Pick<SessionManager, "setTopicProbeMessageId" | "getRecoveryAnchor">>,
   tmuxManager: Pick<TmuxManager, "findWindowById">
 ): Promise<void> {
   if (!isUserAllowed(ctx.from?.id, config)) return;
@@ -562,7 +569,23 @@ export async function forwardCommandHandler(
   const command = ctx.msg.text.split("@")[0] ?? ctx.msg.text;
   const windowId = sessionManager.resolveWindowForThread(ctx.from!.id, threadId);
   if (!windowId) {
-    await replyWithFallback(ctx, "❌ No session bound to this topic.");
+    // recovery_pending: the binding row is preserved (so the soft-deleted
+    // last_session_id is still on disk) but window_id is NULL — Claude has
+    // no live window to receive a forwarded slash command. Tell the user
+    // exactly how to recover instead of the generic "No session bound".
+    const anchor =
+      threadId !== null && sessionManager.getRecoveryAnchor
+        ? sessionManager.getRecoveryAnchor(ctx.from!.id, threadId)
+        : null;
+    if (anchor) {
+      await replyWithFallback(
+        ctx,
+        `🔄 This topic is awaiting recovery (previous session: ${anchor.slice(0, 8)}…).\n` +
+          `Send any plain text message in this topic to re-attach — the resume picker will default to that session.`
+      );
+    } else {
+      await replyWithFallback(ctx, "❌ No session bound to this topic.");
+    }
     return;
   }
 

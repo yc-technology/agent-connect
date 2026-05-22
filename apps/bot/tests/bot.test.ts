@@ -541,6 +541,76 @@ describe("bot session commands", () => {
     expect(reply).toHaveBeenCalledWith(expect.stringContaining("project"), formattedOptions);
   });
 
+  it("forwardCommandHandler: recovery_pending binding → redirect to /join, not generic 'no session'", async () => {
+    // After Plan-A soft-delete the binding row survives with window_id=NULL.
+    // Without this branch the user typing /resume (or /clear, /compact, …)
+    // in a recovery_pending topic would see "❌ No session bound to this
+    // topic." which is misleading — the binding IS there, just detached.
+    const reply = vi.fn();
+    const getRecoveryAnchor = vi.fn(() => "sess-abcdef1234");
+
+    await forwardCommandHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42, text: "/resume@bot" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        resolveWindowForThread: () => null, // window_id = NULL in DB
+        getDisplayName: () => "",
+        sendToWindow: vi.fn(),
+        clearWindowSession: vi.fn(),
+        getRecoveryAnchor
+      },
+      {
+        findWindowById: vi.fn()
+      }
+    );
+
+    expect(getRecoveryAnchor).toHaveBeenCalledWith(12345, 42);
+    const calls = reply.mock.calls.map((c) => c[0] as string);
+    expect(calls.some((t) => t.includes("awaiting recovery"))).toBe(true);
+    // slice(0, 8) of "sess-abcdef1234" → "sess-abc"
+    expect(calls.some((t) => t.includes("sess-abc"))).toBe(true);
+    // Implicit join: tell the user to send any text — there's no real /join command.
+    expect(calls.some((t) => t.includes("re-attach"))).toBe(true);
+    expect(calls.some((t) => t.includes("No session bound"))).toBe(false);
+  });
+
+  it("forwardCommandHandler: window_id=null AND no recovery anchor → keeps the original 'no session' message", async () => {
+    // Defends against the case where a binding row exists but the recovery
+    // path doesn't apply (e.g. older DBs migrated without an anchor, or the
+    // soft-delete happened before SessionStart ever fired). Behaviour must
+    // not regress for those rows.
+    const reply = vi.fn();
+
+    await forwardCommandHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42, text: "/resume@bot" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        resolveWindowForThread: () => null,
+        getDisplayName: () => "",
+        sendToWindow: vi.fn(),
+        clearWindowSession: vi.fn(),
+        getRecoveryAnchor: vi.fn(() => null)
+      },
+      {
+        findWindowById: vi.fn()
+      }
+    );
+
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("No session bound"), formattedOptions);
+  });
+
   it("sets the command menu including Claude slash commands", async () => {
     const api = {
       deleteMyCommands: vi.fn(async () => true as const),
