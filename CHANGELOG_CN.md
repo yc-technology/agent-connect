@@ -9,6 +9,47 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.2 — 2026-05-22
+
+### 🐛 修复 — turn 级 API 错误不再让 Telegram 卡在 stale 状态
+
+turn 因上游 API 错误（rate_limit / server_error / billing_error / …）
+结束时，Claude Code 会发 `StopFailure` hook —— 但我们之前没订阅，所以
+失败是**静默**的，Telegram 一直停在最后那条 spinner 状态文字上。复现：
+`/compact` 收到 Claude API 500，pane 上的 spinner 直接消失没有完成
+标记，`parseStatusLine` 返回 null，Telegram 卡在
+"Compacting conversation… 1%" 不动。
+
+- `hookInstaller` 让 Claude 订阅 `StopFailure`（Codex 不发此事件，
+  install 列表不变）。
+- `hookRouter` 处理 `StopFailure` → `onDrain`（吃掉错误前的残留输出）
+  → `fireStopFailure` → `fireTurnEnd("failure")`。
+- `fireStopFailure` 格式化 `❌ Turn failed (server_error) — <message>`
+  通过现有的 `onStatusEvent` 通道发出去 —— 那条 stale spinner status
+  会被**编辑覆盖**为错误文字。
+- `fireTurnEnd("failure")` 的实现早就在 `multiBotRuntime` 里写好
+  （给最后那条 assistant 消息加 🤔 而不是 👌），这次是**第一个真实**
+  调用 failure 路径的事件。
+
+`agc hook --install` 在 bot 启动时自动把 `StopFailure` 写进
+`~/.claude/settings.json`，老用户下次 service 重启就生效。
+
+### ✨ 新增 — `/resume` 斜杠命令 + recovery-aware 兜底
+
+- `/resume` 加入 `/clear` / `/compact` / `/cost` / `/help` / `/memory` /
+  `/model` 这组转发命令。TG 输 `/resume` → bot 把 `/resume` 转给绑定
+  的 tmux window → Claude 弹原生 TUI session picker；后续抓取走的就是
+  `terminalParser` 现有的 `ResumeSession` pattern + `interactiveUi`
+  的 inline keyboard（↑↓⏎⎋ 全在）。**0 新投递代码**，纯菜单 + 路由。
+- `forwardCommandHandler` 之前在 `resolveWindowForThread` 返回 null
+  时一律回 `❌ No session bound to this topic.`。0.3.1 软删除之后
+  binding 行可能仍存在（`window_id = NULL` + `last_session_id` 锚点）
+  —— 绑定**还在**，只是脱离了 window。现在 handler 会查
+  `getRecoveryAnchor`：有锚点就给一个引导用户重连的专用提示，没有
+  锚点的兜底文案不动。
+
+---
+
 ## 0.3.1 — 2026-05-22
 
 ### 🐛 修复 — tmux 挂掉不再清空 bot DB

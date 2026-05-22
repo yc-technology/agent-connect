@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.2 — 2026-05-22
+
+### 🐛 Fixed — turn-level API errors no longer leave Telegram on a stale status
+
+When a turn ends due to an upstream API error (rate_limit, server_error,
+billing_error, …), Claude Code fires `StopFailure` — but we weren't
+subscribed, so the failure was silent and Telegram stayed on the last
+spinner status. Concrete repro: `/compact` got a 500 from Claude's API,
+the spinner disappeared from the pane with no completion marker,
+`parseStatusLine` returned null, and Telegram was stuck on
+"Compacting conversation… 1%" indefinitely.
+
+- `hookInstaller` subscribes Claude to `StopFailure`. Codex doesn't
+  emit this event; its install list is unchanged.
+- `hookRouter` dispatches `StopFailure` → `onDrain` (catch any partial
+  output written before the error) → `fireStopFailure` → `fireTurnEnd("failure")`.
+- `fireStopFailure` formats `❌ Turn failed (server_error) — <message>`
+  and pushes through the existing `onStatusEvent` channel — the active
+  status message is OVERWRITTEN with the error text, replacing the
+  stuck spinner.
+- `fireTurnEnd("failure")` was already wired in `multiBotRuntime`
+  (sets 🤔 on the last assistant message instead of 👌); this is the
+  first real caller of the failure outcome.
+
+`agc hook --install` now writes `StopFailure` into
+`~/.claude/settings.json` on every bot startup; existing installs pick
+it up automatically on the next service restart.
+
+### ✨ Added — `/resume` slash command + recovery-aware fallback
+
+- `/resume` joins `/clear`, `/compact`, `/cost`, `/help`, `/memory`,
+  `/model` in the forwarded slash-command set. Typing `/resume` in
+  Telegram forwards `/resume` into the bound tmux window; Claude
+  opens its native TUI session picker, which terminalParser's
+  `ResumeSession` pattern already scrapes and `interactiveUi` already
+  surfaces with an inline ↑/↓/Enter/Esc keyboard. Zero new delivery
+  code — purely menu + plumbing.
+- `forwardCommandHandler` previously responded `❌ No session bound to
+  this topic.` whenever `resolveWindowForThread` returned null. After
+  0.3.1's soft-delete, the binding row can still exist with
+  `window_id = NULL` + a `last_session_id` anchor — the binding IS
+  there, just detached. Now the handler queries `getRecoveryAnchor`
+  and emits a recovery-specific message pointing the user at the
+  implicit-join flow instead.
+
+---
+
 ## 0.3.1 — 2026-05-22
 
 ### 🐛 Fixed — tmux outage no longer wipes the bot DB
