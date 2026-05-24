@@ -85,6 +85,38 @@ describe("parseStatusLine", () => {
     expect(parseStatusLine(pane)).toBe("Hashing… (3m 21s · ↓ 9.1k tokens)");
   });
 
+  it("anchors on upper chrome when input is sandwiched between TWO chromes (live regression)", () => {
+    // Live regression from cc-dog:creative-project on 2026-05-25. The TUI
+    // rendered the input row with chrome BOTH above AND below it:
+    //     ✻ Worked for 36s
+    //     [blank]
+    //     ● How is Claude doing this session? (optional)
+    //       1: Bad  2: Fine  3: Good  0: Dismiss
+    //     [blank]
+    //     ─────────────────  ← chrome 1 (above input)
+    //     ❯ <user input echo>
+    //     ─────────────────  ← chrome 2 (below input)
+    //       ⏵⏵ bypass permissions ...
+    //     [blank padding × 7]
+    // searchStart was lines.length-10, which only saw chrome 2. Walk-back
+    // from chrome 2 hits `❯` immediately and breaks — status detection
+    // returned null, Telegram stayed stuck on the previous spinner text
+    // ("Manifesting…") forever.
+    const pane =
+      "✻ Worked for 36s\n" +
+      "\n" +
+      "● How is Claude doing this session? (optional)\n" +
+      "  1: Bad    2: Fine   3: Good   0: Dismiss\n" +
+      "\n" +
+      "────────────────────────────────────────────────────────────────────────────────\n" +
+      "❯ commit 这些改动\n" +
+      "────────────────────────────────────────────────────────────────────────────────\n" +
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents\n" +
+      "\n\n\n\n\n\n\n";
+    expect(parseStatusLine(pane)).toBe("Worked for 36s");
+    expect(isCompletedStatusLine("Worked for 36s")).toBe(true);
+  });
+
   it("walks past Claude `⏺ ...` (U+23FA, record-circle) session-transcript prompt", () => {
     // Live regression from cc-dog:techbooks-project: Claude's "Can Anthropic
     // look at your session transcript?" telemetry prompt uses U+23FA

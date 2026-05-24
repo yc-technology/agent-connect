@@ -212,8 +212,22 @@ export function parseStatusLine(paneText: string): string | null {
   if (!paneText) return null;
 
   const lines = paneText.split("\n");
+  // Claude's TUI now sandwiches the input row between TWO chrome separators:
+  //     [spinner status]
+  //     [● rating / supplementary notifications]
+  //     ───────────────────  ← chrome 1 (above input)
+  //     ❯ <user input echo>
+  //     ───────────────────  ← chrome 2 (below input)
+  //     [footer mode bar]
+  //     [blank padding]
+  // The walk-back needs to anchor on chrome 1 (above the input); anchoring on
+  // chrome 2 hits the `❯` input line on the very first step backward and
+  // breaks before reaching the spinner — leaving Telegram stuck on whatever
+  // status was last shown. Widen the search and pick the FIRST chrome found
+  // (= the upper one in pane order). When only one chrome is present (older
+  // TUI), the same logic still works.
+  const searchStart = Math.max(0, lines.length - 15);
   let chromeIdx: number | null = null;
-  const searchStart = Math.max(0, lines.length - 10);
 
   for (let i = searchStart; i < lines.length; i += 1) {
     const stripped = (lines[i] ?? "").trim();

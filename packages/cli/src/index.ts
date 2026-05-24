@@ -484,13 +484,27 @@ async function sendFile(argv: string[]): Promise<number> {
     return 1;
   }
 
+  // Target the CALLING pane explicitly. `tmux display-message` without `-t`
+  // returns the client's currently-focused window, NOT the window of the
+  // pane that exec'd this CLI — so a Claude running in window @3 could see
+  // "@0" if the user happened to be looking at the __main__ window when
+  // agc send fired. Use $TMUX_PANE (set by tmux on every child process) as
+  // the unambiguous self-pointer.
+  const callerPane = process.env.TMUX_PANE;
+  if (!callerPane) {
+    process.stderr.write(
+      "agc send must run inside a tmux pane (TMUX_PANE env var not set)\n"
+    );
+    return 1;
+  }
+
   let windowId: string;
   let tmuxSession: string;
   try {
-    windowId = execFileSync("tmux", ["display-message", "-p", "#{window_id}"], {
+    windowId = execFileSync("tmux", ["display-message", "-t", callerPane, "-p", "#{window_id}"], {
       encoding: "utf8"
     }).trim();
-    tmuxSession = execFileSync("tmux", ["display-message", "-p", "#{session_name}"], {
+    tmuxSession = execFileSync("tmux", ["display-message", "-t", callerPane, "-p", "#{session_name}"], {
       encoding: "utf8"
     }).trim();
   } catch (err) {

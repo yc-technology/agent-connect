@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.3 — 2026-05-25
+
+### 🐛 Fixed — `parseStatusLine` anchored on the wrong chrome when input was sandwiched
+
+Claude's TUI now wraps the input row with chrome separators on BOTH sides:
+
+```
+✻ Worked for 36s              ← spinner status (above)
+● How is Claude doing...      ← rating prompt (skip)
+─────────────────────────     ← chrome 1 (above input)
+❯ commit 这些改动              ← user input echo
+─────────────────────────     ← chrome 2 (below input)
+  ⏵⏵ bypass permissions ...   ← footer mode bar
+```
+
+`searchStart = lines.length - 10` only saw chrome 2. Walking back from chrome 2
+hit the `❯` input arrow on the first step, terminated, returned null. Telegram
+stayed stuck on the previous spinner text (live-reported as "Manifesting…
+(35s · ↑ 321 tokens · thinking more)" lingering for minutes after Claude had
+actually finished). Widened search to last 15 lines and anchored on the FIRST
+chrome found (= upper one in pane order); walk-back now sees the spinner
+naturally. +1 test pinning the four-piece chrome/input/chrome/footer layout.
+
+### 🐛 Fixed — `agc send` resolved the wrong window when called via Bash tool
+
+`agc send /path/to/file` ran `tmux display-message -p "#{window_id}"` without
+`-t`, which returns tmux's currently-active window (the user's foreground
+view), not the window of the pane that exec'd the CLI. So a Claude running in
+window `@4` could see `@0` and report "no Telegram topic is bound to window
+@0" even when @4 was bound. Now uses `$TMUX_PANE` (set by tmux on every child
+process) as the explicit `-t` target so the lookup always reflects the
+calling pane. `agc hook` was already correct.
+
+---
+
 ## 0.3.2 — 2026-05-22
 
 ### 🐛 Fixed — turn-level API errors no longer leave Telegram on a stale status

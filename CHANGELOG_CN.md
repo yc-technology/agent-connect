@@ -9,6 +9,39 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.3 — 2026-05-25
+
+### 🐛 修复 — `parseStatusLine` 在 input 被双 chrome 夹住时锚错
+
+Claude TUI 现在把 input 行**上下都包了 chrome 分隔线**：
+
+```
+✻ Worked for 36s              ← spinner（在上面）
+● How is Claude doing...      ← rating 提示（被跳过）
+─────────────────────────     ← chrome 1（input 上方）
+❯ commit 这些改动              ← 用户输入回显
+─────────────────────────     ← chrome 2（input 下方）
+  ⏵⏵ bypass permissions ...   ← footer
+```
+
+`searchStart = lines.length - 10` 只能看见 chrome 2。从 chrome 2 向上走第一步
+就碰到 `❯` 输入箭头，终止，返回 null。Telegram 停在上一条 spinner 文本上不动
+（实测："Manifesting… (35s · ↑ 321 tokens · thinking more)" 在 Claude 实际
+已完成后还挂了好几分钟）。改成搜索范围扩到末尾 15 行 + 锚到**最上面**的 chrome
+（pane 顺序里靠前那条）；walk-back 自然能找到 spinner。+1 测试锁定
+chrome/input/chrome/footer 四段式布局。
+
+### 🐛 修复 — `agc send` 算 windowId 时拿到了错的 window
+
+`agc send /path/to/file` 跑的是 `tmux display-message -p "#{window_id}"`，
+**不带 `-t`** —— tmux 这种情况返回的是 client 当前 focus 的 window，**不是
+exec 这个 CLI 的 pane 所在的 window**。所以 Claude 在 `@4` 里调 `agc send`
+可能拿到 `@0`，然后报 "no Telegram topic is bound to window @0" 哪怕 @4
+其实是绑定好的。现在改用 `$TMUX_PANE` 环境变量（tmux 给每个 child 进程都
+设置的）显式作 `-t`，lookup 永远反映调用方的 pane。`agc hook` 早就写对了。
+
+---
+
 ## 0.3.2 — 2026-05-22
 
 ### 🐛 修复 — turn 级 API 错误不再让 Telegram 卡在 stale 状态
