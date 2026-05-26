@@ -9,6 +9,27 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.6 — 2026-05-26
+
+### 🐛 修复 — window picker 在 windowName / cwd 为空时渲染乱码行
+
+线上某个 0.3.x 用户反馈：tmux window 如果 `windowName` 是空字符串
+（或者 `pane_current_path` 是空），"Bind to Existing Window" picker
+里会渲染成 `• \`\` — ` —— 空反引号在我们的 markdown→entities 转换
+器里**不会**形成 code entity，于是 TG 显示成两个字面反引号字符；
+后面 em-dash 单独挂着没路径。视觉上是乱码。
+
+- `buildWindowPicker` 改成 windowName 空时 fallback 到
+  `(unnamed <window_id>)`，cwd 空时 fallback 到 `(no cwd)`。markdown
+  行和 inline keyboard 按钮 label 都改了。
+- windowName 里如果包含反引号现在会被转义（`` \` ``）—— 防御 defense
+  in depth：像 `` foo`bar `` 这种名字不会提前关掉 code span 把后续
+  内容当成裸 markdown 漏出去。
+
++2 测试锁定两种边界（空字段 → fallback；含反引号 → 转义）。
+
+---
+
 ## 0.3.5 — 2026-05-26
 
 ### 🐛 修复 — supervisor 升级时不再 crash-loop

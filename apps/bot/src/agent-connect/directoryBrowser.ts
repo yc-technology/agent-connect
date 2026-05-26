@@ -73,16 +73,27 @@ export function buildWindowPicker(
     "Pick one to attach it here, or start a new session.\n"
   ];
 
+  // Defend against tmux returning empty windowName / cwd. Real cause is
+  // typically a `tmux rename-window ""` or `automatic-rename off` setup
+  // (reported in the wild). Without fallback the line renders as
+  // `• \`\` — ` which is visually garbage in Telegram: the empty backticks
+  // don't form a code entity so they show as literal backticks, and the
+  // trailing em-dash sits alone with no path. Also escape any backticks
+  // inside windowName so they don't close the code span prematurely.
   for (const window of windows) {
-    lines.push(`• \`${window.windowName}\` — ${displayPath(window.cwd)}`);
+    const name = window.windowName || `(unnamed ${window.windowId})`;
+    const safeName = name.replace(/`/g, "\\`");
+    const path = window.cwd ? displayPath(window.cwd) : "(no cwd)";
+    lines.push(`• \`${safeName}\` — ${path}`);
   }
 
   const rows: InlineButton[][] = [];
   for (let i = 0; i < windows.length; i += 2) {
     const row: InlineButton[] = [];
     for (let j = 0; j < Math.min(2, windows.length - i); j += 1) {
-      const name = windows[i + j]!.windowName;
-      row.push(InlineKeyboard.text(`🖥 ${truncateLabel(name, 13)}`, `${CB_WIN_BIND}${i + j}`));
+      const w = windows[i + j]!;
+      const label = w.windowName || `(unnamed ${w.windowId})`;
+      row.push(InlineKeyboard.text(`🖥 ${truncateLabel(label, 13)}`, `${CB_WIN_BIND}${i + j}`));
     }
     rows.push(row);
   }

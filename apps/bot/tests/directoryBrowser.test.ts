@@ -62,6 +62,37 @@ describe("directory browser", () => {
     expect(result.keyboard.inline_keyboard.flat().map(callbackData)).toContain("wb:sel:0");
   });
 
+  it("window picker substitutes fallback for empty windowName and cwd", () => {
+    // Reported in the wild (林老师's TG setup): a tmux window with empty
+    // windowName + empty cwd rendered as `• \`\` — ` — the empty backticks
+    // don't form a code entity so they show as literal characters in TG,
+    // and the trailing em-dash sits alone with no path. Defend with
+    // explicit "(unnamed)" / "(no cwd)" fallback so the row stays readable.
+    const result = buildWindowPicker([
+      { windowId: "@7", windowName: "", cwd: "" }
+    ]);
+    expect(result.text).toContain("(unnamed @7)");
+    expect(result.text).toContain("(no cwd)");
+    // No bare ``  literal backtick pair (would mean code entity collapsed).
+    expect(result.text).not.toMatch(/`` /);
+    // Keyboard label likewise uses fallback, not empty truncate.
+    const labels = result.keyboard.inline_keyboard
+      .flat()
+      .map((b) => (b as { text?: string }).text ?? "");
+    expect(labels.some((l) => l.includes("(unnamed @7)"))).toBe(true);
+  });
+
+  it("window picker escapes backticks inside windowName", () => {
+    // Defense in depth: if a windowName ever contains a literal backtick
+    // (someone named their tmux window with `tmux rename-window 'foo\`bar'`),
+    // it would prematurely close our code span and leak the rest as plain
+    // markdown. Escape with `\\\``.
+    const result = buildWindowPicker([
+      { windowId: "@1", windowName: "foo`bar", cwd: "/tmp" }
+    ]);
+    expect(result.text).toContain("foo\\`bar");
+  });
+
   it("builds a session picker with relative timestamps", () => {
     const dir = tmpDir();
     try {

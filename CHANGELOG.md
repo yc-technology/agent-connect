@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.6 — 2026-05-26
+
+### 🐛 Fixed — window picker rendered garbage line on empty windowName / cwd
+
+Reported in the wild from a 0.3.x deployment: a tmux window with empty
+`windowName` (or empty `pane_current_path`) rendered as `• \`\` — ` in
+the "Bind to Existing Window" picker. Empty backticks don't form a code
+entity in our markdown-to-entities converter, so they showed as literal
+backticks; the trailing em-dash sat alone with no path. Visible garbage.
+
+- `buildWindowPicker` now substitutes `(unnamed <window_id>)` for empty
+  windowName and `(no cwd)` for empty cwd, both in the markdown line AND
+  the inline-keyboard button label.
+- Backticks inside windowName are now escaped (`` \` ``) — defense in
+  depth so a name like `` foo`bar `` can't prematurely close the code
+  span and leak the rest as plain markdown.
+
++2 tests pin both edges (empty fields → fallback labels; embedded
+backtick → escaped).
+
+---
+
 ## 0.3.5 — 2026-05-26
 
 ### 🐛 Fixed — supervisor no longer crash-loops on upgrade
