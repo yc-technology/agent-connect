@@ -16,8 +16,9 @@
     "test:ts": "pnpm --filter @yc-tech/telegramify-markdown build && pnpm -r test:ts"
   },
   "devDependencies": {
-    "@yc-tech/agent-connect-cli": "workspace:*",
+    "@changesets/cli": "^2.31.0",
     "@types/node": "^25.8.0",
+    "@yc-tech/agent-connect-cli": "workspace:*",
     "tsx": "^4.22.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.6"

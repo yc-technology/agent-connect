@@ -9,6 +9,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.4 — 2026-05-26
+
+### 🚨 Critical — 0.3.1 / 0.3.2 / 0.3.3 installs were broken on npm
+
+These three releases shipped with `workspace:*` literals in their npm tarball
+`dependencies` field:
+
+```
+@yc-tech/agent-connect-cli  →  "@yc-tech/agent-connect-bot": "workspace:*"
+@yc-tech/agent-connect-bot  →  "@yc-tech/telegramify-markdown": "workspace:*"
+```
+
+The npm registry doesn't understand pnpm's `workspace:` protocol, so
+`npm i -g @yc-tech/agent-connect-cli@0.3.x` (1 ≤ x ≤ 3) fails with
+`EUNSUPPORTEDPROTOCOL` or similar. Root cause was switching the
+release flow from `pnpm publish` (which rewrites `workspace:*` to the
+locked version) to plain `npm publish` (which does NOT). 0.3.0 was
+correct because it predated that flow change.
+
+This release is identical to 0.3.3 in functionality. The fix is purely
+on the publish path:
+
+- Versions republished via `pnpm publish` from each package directory,
+  so `workspace:*` is rewritten to an exact version pin
+  (`"@yc-tech/agent-connect-bot": "0.3.4"`,
+  `"@yc-tech/telegramify-markdown": "0.1.1"`).
+- 0.3.1, 0.3.2, 0.3.3 of both packages are deprecated on npm with a
+  pointer to 0.3.4.
+
+**Upgrade**: `npm i -g @yc-tech/agent-connect-cli@latest` (or `@^0.3.4`).
+If you were on 0.3.0, you can skip 0.3.1–0.3.3 directly.
+
+### 📋 Recap — what 0.3.1 → 0.3.3 contained (now actually usable)
+
+For users coming straight from 0.3.0, this release rolls up everything
+those broken releases were trying to deliver:
+
+- **0.3.1**: Plan-A tmux outage durability (DB preserved across tmux
+  death); soft-delete `thread_bindings` with FK SET NULL + new
+  `last_session_id` recovery anchor; `/join` resume picker
+  default-highlights the previous session.
+- **0.3.2**: Subscribe to Claude's `StopFailure` hook (surfaces
+  rate_limit / server_error / billing_error etc. to Telegram + clears
+  stuck spinner text); `/resume` slash command + recovery-aware
+  fallback in `forwardCommandHandler`.
+- **0.3.3**: `parseStatusLine` now anchors on the upper chrome when
+  the TUI sandwiches input between two separators (fixed
+  "Manifesting…" status getting stuck); `agc send` resolves
+  `windowId` via `$TMUX_PANE` instead of tmux's currently-active
+  window.
+
+See the per-version sections below for details. Schema migrations all
+still apply on first launch.
+
+---
+
 ## 0.3.3 — 2026-05-25
 
 ### 🐛 Fixed — `parseStatusLine` anchored on the wrong chrome when input was sandwiched

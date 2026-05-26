@@ -9,6 +9,54 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.4 — 2026-05-26
+
+### 🚨 关键 — 0.3.1 / 0.3.2 / 0.3.3 在 npm 上**装不上**
+
+这三个版本发布的 tarball `dependencies` 里漏了 `workspace:*` 字面量：
+
+```
+@yc-tech/agent-connect-cli  →  "@yc-tech/agent-connect-bot": "workspace:*"
+@yc-tech/agent-connect-bot  →  "@yc-tech/telegramify-markdown": "workspace:*"
+```
+
+npm registry 不认 pnpm 的 `workspace:` 协议，所以
+`npm i -g @yc-tech/agent-connect-cli@0.3.x` (1 ≤ x ≤ 3) 会直接报
+`EUNSUPPORTEDPROTOCOL` 失败。根因是发布流程从 `pnpm publish`（会把
+`workspace:*` 改写成 lockfile 里的版本号）切到了 `npm publish`，
+而 npm 不做这个改写。0.3.0 没事，因为它在这个流程切换前。
+
+本次 release 功能上和 0.3.3 一样。修复完全在发布流程上：
+
+- 改用 `pnpm publish` 从各 package 目录发，`workspace:*` 被改写成
+  精确版本号（`"@yc-tech/agent-connect-bot": "0.3.4"`、
+  `"@yc-tech/telegramify-markdown": "0.1.1"`）。
+- 0.3.1 / 0.3.2 / 0.3.3 在 npm 上标记为 deprecated，指向 0.3.4。
+
+**升级**：`npm i -g @yc-tech/agent-connect-cli@latest`（或 `@^0.3.4`）。
+之前停在 0.3.0 的话，直接跳到 0.3.4 没问题。
+
+### 📋 0.3.1 → 0.3.3 内容回顾（现在才真正可用）
+
+如果你是从 0.3.0 直接跳过来，本次 release 把那三个版本想送的内容
+一次性带齐：
+
+- **0.3.1**：Plan-A tmux outage 容错（tmux 死也不丢 DB）；
+  `thread_bindings` 软删除 + FK SET NULL + 新增 `last_session_id`
+  恢复锚点；`/join` resume picker 默认高亮上次绑过的 session。
+- **0.3.2**：订阅 Claude 的 `StopFailure` hook（rate_limit /
+  server_error / billing_error 等显式报到 TG + 清掉卡住的 spinner）；
+  `/resume` 斜杠命令 + `forwardCommandHandler` 对 recovery_pending
+  的友好提示。
+- **0.3.3**：`parseStatusLine` 在 TUI input 被双 chrome 夹住的新布局
+  下正确锚定上方 chrome（修了"Manifesting…"卡住）；`agc send` 用
+  `$TMUX_PANE` 算 windowId，不被 tmux 当前 active window 误导。
+
+每个版本的细节在下面各自的 section。schema migration 还是首次启动
+时自动跑。
+
+---
+
 ## 0.3.3 — 2026-05-25
 
 ### 🐛 修复 — `parseStatusLine` 在 input 被双 chrome 夹住时锚错
