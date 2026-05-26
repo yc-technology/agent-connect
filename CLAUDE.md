@@ -202,7 +202,42 @@ fire. To avoid entirely, `agc stop` before `pnpm -r build`.
 | `AGENT_CONNECT_LOG_LEVEL` | `info` | pino level |
 | `AGENT_CONNECT_LOG_STDOUT` | unset | Set `=1` to mirror logs to stdout too |
 | `AGENT_CONNECT_STATUS_THROTTLE_MS` | `3000` | Min spacing between status edits per (user, thread) |
+| `AGENT_CONNECT_STATUS_POLL_INTERVAL_MS` | `2000` | statusPolling tick interval. Lower = snappier status, higher = fewer tmux forks per second |
 | `AGENT_CONNECT_IMAGE_AS_DOCUMENT` | `true` | Route tool_result images via sendDocument for full quality (`false` = compressed photo with inline preview) |
+
+## Releasing
+
+Use [`@changesets/cli`](https://github.com/changesets/changesets); see
+[`docs/release.md`](docs/release.md) for the full walk-through. **Never run
+`npm publish` directly** — pnpm's `workspace:*` protocol is not rewritten by
+plain npm and the published tarball will contain literal `"workspace:*"` in
+its dependencies, which the npm registry can't resolve. 0.3.1 / 0.3.2 / 0.3.3
+shipped that way and had to be deprecated; 0.3.4 was the republish.
+
+```bash
+pnpm changeset            # interactive: pick packages + patch/minor/major + summary
+# commit the generated .changeset/<slug>.md with the code change
+
+# at release time:
+pnpm changeset version    # bumps package.json + deletes consumed changesets
+# hand-write CHANGELOG.md + CHANGELOG_CN.md entries (changelog: false in config)
+git commit + push + git tag v<X.Y.Z>
+pnpm changeset publish    # rewrites workspace:* + npm publish + per-package git tags
+git push --tags
+```
+
+After publish, **always pack-verify** the deps are concrete versions, not
+`workspace:*`:
+
+```bash
+npm pack @yc-tech/agent-connect-cli@<version>
+tar -xOf yc-tech-agent-connect-cli-<version>.tgz package/package.json | jq .dependencies
+```
+
+`.changeset/config.json` notes:
+- `changelog: false` — CHANGELOG is hand-written. Don't switch this on without removing the per-version sections by hand.
+- `fixed: [["@yc-tech/agent-connect-bot", "@yc-tech/agent-connect-cli"]]` — cli imports bot internals, must always bump together.
+- `ignore: ["@yc-tech/agent-connect-web"]` — apps/web isn't published; it ships bundled in apps/bot's tarball.
 
 ## Conventions & Invariants
 
