@@ -202,4 +202,72 @@ describe("supervisor", () => {
     expect(info?.lastRestartReason).toContain("healthz failed");
     await shutdownEmitting(sv, [c2]);
   });
+
+  it("child exit code 2 → no respawn, supervisor stops", async () => {
+    // Code 2 is service.ts's "explicit bail, don't respawn me" signal,
+    // emitted when a fresh child detects another agent-connect already
+    // listening on its port. Respawning would just hit the same conflict
+    // forever — that's what produced the 8786-cycle loop reported in the
+    // wild on upgrade-without-stop.
+    const c1 = fakeChild(1);
+    const spawnFn = vi.fn(() => c1 as never);
+    const probeHealthFn = vi.fn(async () => true);
+    const sv = buildSupervisor(baseOpts({ spawnFn, probeHealthFn }));
+    const startP = sv.start();
+
+    // Wait for first spawn to register.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+
+    // Child bails with code 2.
+    c1.emit("exit", 2, null);
+
+    // Give the supervisor a beat — confirm no respawn happens.
+    await new Promise((r) => setTimeout(r, 200));
+    expect(spawnFn).toHaveBeenCalledTimes(1);
+
+    // supervisor.start() resolved (no longer hung waiting for shutdown).
+    await startP;
+  });
+
+  it("crash-loop backstop trips after restartBudget exits within window", async () => {
+    // Same scenario as code 2 but the child exits with code 1 (or any
+    // other non-2 code) — e.g. legacy supervisor predating the fix, or
+    // a real startup bug. The supervisor should give up after the budget
+    // is exhausted rather than looping for hours.
+    const children: ReturnType<typeof fakeChild>[] = [];
+    let nth = 0;
+    const spawnFn = vi.fn(() => {
+      const c = fakeChild(nth + 1);
+      children.push(c);
+      nth += 1;
+      return c as never;
+    });
+    const probeHealthFn = vi.fn(async () => true);
+    const sv = buildSupervisor(
+      baseOpts({
+        spawnFn,
+        probeHealthFn,
+        restartBudget: 2, // bail after 2 unintentional exits in window
+        restartBudgetWindowMs: 10_000
+      })
+    );
+    const startP = sv.start();
+
+    // Wait first spawn.
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Three crashes in quick succession — should exceed budget of 2.
+    children[0]!.emit("exit", 1, null);
+    await new Promise((r) => setTimeout(r, 30));
+    children[1]?.emit("exit", 1, null);
+    await new Promise((r) => setTimeout(r, 30));
+    children[2]?.emit("exit", 1, null);
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Initial spawn + 2 respawns inside the budget = 3 spawns total.
+    // The 3rd crash trips the backstop, so spawn 4 never happens.
+    expect(spawnFn.mock.calls.length).toBeLessThanOrEqual(3);
+    await startP;
+  });
 });

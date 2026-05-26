@@ -43,6 +43,9 @@ export interface SupervisorOptions {
   backoffMs?: number[];
   /** Max time to wait for `/healthz` to come back after a respawn. */
   bootHealthyTimeoutMs?: number;
+  /** Crash-loop budget — bail after this many unintentional exits in `restartBudgetWindowMs`. */
+  restartBudget?: number;
+  restartBudgetWindowMs?: number;
   /** Hook for tests — defaults to actual spawn(node, script, args). */
   spawnFn?: (cmd: string, args: string[]) => ChildProcess;
   /** Hook for tests — defaults to undici request. */
@@ -58,6 +61,21 @@ const DEFAULT_HEALTH_TIMEOUT_MS = 5_000;
 const DEFAULT_HEALTH_FAILURE_THRESHOLD = 3;
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 const DEFAULT_BOOT_HEALTHY_TIMEOUT_MS = 60_000;
+
+// Crash-loop backstop: if the child fails this many times within this
+// many milliseconds, give up and let the supervisor exit. Catches
+// startup crashes that aren't code=2 (the "explicit bail" path) — e.g.
+// a missing dependency or a config error that would otherwise spin
+// forever. 8786 respawn cycles were observed in a real user upgrade
+// from <0.3.5 with a stale daemon left running; without a backstop the
+// loop continued for ~12 hours until the user noticed.
+const DEFAULT_RESTART_BUDGET = 5;
+const DEFAULT_RESTART_BUDGET_WINDOW_MS = 30_000;
+
+// Server child exit code 2 = "explicit bail, do not respawn". Reserved
+// for service.ts to use on runtime-conflict (stale daemon still
+// listening on our port).
+const EXIT_CODE_EXPLICIT_BAIL = 2;
 
 export interface SupervisorHandle {
   /** Programmatic restart (same path as SIGUSR2). */
@@ -117,6 +135,13 @@ export function buildSupervisor(opts: SupervisorOptions): SupervisorHandle & {
   let restartCount = 0;
   let backoffIdx = 0;
   let healthTimer: NodeJS.Timeout | null = null;
+  // Crash-loop guard: sliding-window of recent child-exit timestamps.
+  // If we hit `restartBudget` exits within `restartBudgetWindowMs`, stop
+  // respawning. Catches startup-crashing children that aren't using the
+  // code-2 bail path (e.g. older versions, or genuine bugs).
+  const restartBudget = opts.restartBudget ?? DEFAULT_RESTART_BUDGET;
+  const restartBudgetWindowMs = opts.restartBudgetWindowMs ?? DEFAULT_RESTART_BUDGET_WINDOW_MS;
+  const recentExits: number[] = [];
   let resolveStopped!: () => void;
   const stopped = new Promise<void>((r) => (resolveStopped = r));
 
@@ -156,7 +181,48 @@ export function buildSupervisor(opts: SupervisorOptions): SupervisorHandle & {
         "supervisor: server child exited"
       );
       if (wasIntentional) return;
-      // Unexpected exit during steady-state operation — backoff + respawn.
+
+      // Code 2 = "explicit bail, do not respawn". service.ts uses this
+      // when it detects another agent-connect already listening on our
+      // port (typical scenario: user upgraded the npm package without
+      // running `agc stop` first, so a stale daemon is still bound).
+      // Respawning would just hit the same conflict forever.
+      if (code === EXIT_CODE_EXPLICIT_BAIL) {
+        logger().error(
+          { code, signal },
+          "supervisor: server child bailed with code 2 — not respawning. " +
+            "Run `agc stop --all` then `agc start --daemon` for a clean restart."
+        );
+        setState("stopping");
+        resolveStopped();
+        return;
+      }
+
+      // Backstop: if recent exits exceed the budget, stop respawning.
+      // Stale daemons predating the code-2 fix (or genuine startup
+      // bugs) would otherwise loop forever — 8786 cycles seen in the wild.
+      const now = Date.now();
+      recentExits.push(now);
+      while (recentExits.length > 0 && now - recentExits[0]! > restartBudgetWindowMs) {
+        recentExits.shift();
+      }
+      if (recentExits.length > restartBudget) {
+        logger().error(
+          {
+            recentExits: recentExits.length,
+            budget: restartBudget,
+            windowMs: restartBudgetWindowMs,
+            lastCode: code,
+            lastSignal: signal
+          },
+          "supervisor: crash-loop backstop tripped — refusing further respawns. " +
+            "Investigate logs; `agc stop --all` then `agc start --daemon` once root cause is fixed."
+        );
+        setState("stopping");
+        resolveStopped();
+        return;
+      }
+
       void respawnWithBackoff(
         `server child exited unexpectedly (code=${code ?? "?"} signal=${signal ?? "?"})`
       );

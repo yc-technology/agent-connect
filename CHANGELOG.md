@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.5 — 2026-05-26
+
+### 🐛 Fixed — supervisor no longer crash-loops on upgrade
+
+A real user upgraded the npm package while their daemon was still
+running, then ran `agc restart`. The old supervisor (loaded in memory
+with pre-upgrade code) spawned new-version server children, those
+children saw the still-bound port from the lingering runtime.json,
+threw, exited code 1, and the supervisor dutifully respawned them.
+**8786 crash-restart cycles** before the user manually killed the
+supervisor.
+
+The reported "stuck Thinking…" status messages on Telegram turned out
+to be downstream of this same loop: Stop hooks fired during the brief
+crash windows were dropped (the bot was unreachable for sub-second
+gaps repeatedly), and `drainTranscript` persists its offset BEFORE
+dispatching, so the missed Stop events never replayed on the next boot.
+With the loop broken, those Stop hooks land normally and the Thinking
+status clears as designed.
+
+Two layers of defense:
+
+- **Service exits code 2** (instead of throwing → code 1) when it
+  detects another agent-connect listening on its port, with stderr
+  pointing at `agc stop --all && agc start --daemon`. Code 2 is the
+  reserved "explicit bail, don't respawn me" signal between server
+  and supervisor.
+- **Supervisor treats code 2 as a permanent stop**, refusing to
+  respawn and shutting itself down with a clear error. Independent of
+  code 2, it also adds a **crash-loop backstop**: 5 unintentional
+  exits within 30 s and the supervisor gives up. Catches startup
+  crashes that aren't using code 2 (legacy clients, real bugs).
+
+README + CLAUDE.md now recommend `agc stop --all → npm i → agc start
+--daemon` as the upgrade procedure. The previous wording (`npm i ...
+&& agc restart`) created the in-the-wild incident.
+
+---
+
 ## 0.3.4 — 2026-05-26
 
 ### 🚨 Critical — 0.3.1 / 0.3.2 / 0.3.3 installs were broken on npm

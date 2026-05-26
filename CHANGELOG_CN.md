@@ -9,6 +9,38 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.5 — 2026-05-26
+
+### 🐛 修复 — supervisor 升级时不再 crash-loop
+
+真用户场景：跑着 daemon 直接 `npm i -g @yc-tech/agent-connect-cli@latest`
+然后 `agc restart`。**旧 supervisor**（内存里还是升级前的代码）spawn
+新版本的 server child，新 child 看到旧 `runtime.json` 还指向 alive 的
+pid 占着 17666 端口 → throw → exit code 1 → supervisor 尽职 respawn →
+循环。**8786 次重启循环**才被用户手动杀掉。
+
+外部用户反馈的"Telegram Thinking… 卡住"症状，**其实是这个 loop 的下游
+副作用**：crash window 期间发到 bot 的 Stop hook 因为 bot 短暂不可达
+被丢；而 `drainTranscript` 在 dispatch 之前就 persist offset，下次
+boot 不会重发，于是 Thinking 永远没被清。loop 一断，Stop hook 正常
+落地，Thinking 按设计自动清。
+
+两层防御：
+
+- **Service exit code 2**（不再 throw → code 1）：检测到端口已被另一
+  个 agent-connect 占用时，stderr 写清楚 + `process.exit(2)`。code 2
+  是 server 和 supervisor 之间约定的"明确 bail，别 respawn"信号。
+- **Supervisor 对 code 2 永久停**：识别 code 2 → log error → 优雅
+  退出，不 respawn。**独立于 code 2**，还加了 **crash-loop backstop**：
+  30 秒内 5 次非主动退出 → supervisor 放弃。覆盖那些**不走 code 2 的
+  启动崩溃**（老版本 client、真 bug 等）。
+
+README + CLAUDE.md 改成推荐 `agc stop --all → npm i → agc start --daemon`
+作为升级流程。之前的"`npm i ... && agc restart`" 说法就是这次事故的
+起点，已删。
+
+---
+
 ## 0.3.4 — 2026-05-26
 
 ### 🚨 关键 — 0.3.1 / 0.3.2 / 0.3.3 在 npm 上**装不上**

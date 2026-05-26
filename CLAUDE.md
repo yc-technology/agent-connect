@@ -205,6 +205,35 @@ fire. To avoid entirely, `agc stop` before `pnpm -r build`.
 | `AGENT_CONNECT_STATUS_POLL_INTERVAL_MS` | `2000` | statusPolling tick interval. Lower = snappier status, higher = fewer tmux forks per second |
 | `AGENT_CONNECT_IMAGE_AS_DOCUMENT` | `true` | Route tool_result images via sendDocument for full quality (`false` = compressed photo with inline preview) |
 
+## Upgrading the npm package
+
+**Always `agc stop --all` before `npm i -g @yc-tech/agent-connect-cli@latest`.**
+The supervisor that's still in memory was loaded with the old code; if you
+`agc restart` after the upgrade, the old supervisor will spawn new-version
+children via the on-disk script path and the version mismatch can crash
+the child on startup. Without the safeguards described below, this used to
+loop for hours — one user reported 8786 crash-restart cycles before they
+killed the supervisor manually.
+
+What the supervisor / server now do as backstops (0.3.5+):
+
+1. **Service exits code 2** when it detects another agent-connect listening
+   on its port (stale daemon scenario). The supervisor recognises code 2 as
+   "explicit bail, don't respawn" and shuts itself down with a clear error
+   message instead of looping.
+2. **Crash-loop budget**: if any child exits unintentionally 5+ times within
+   30s — for any code, including legacy supervisors that don't use code 2
+   — the supervisor gives up and exits. Without this, an older supervisor
+   running pre-fix code could still loop forever.
+
+If you hit the message `crash-loop backstop tripped — refusing further
+respawns` in logs, the fix is the same as the prevention:
+
+```bash
+agc stop --all       # nukes any agc process (supervisor + children)
+agc start --daemon   # clean start with current binaries
+```
+
 ## Releasing
 
 Use [`@changesets/cli`](https://github.com/changesets/changesets); see

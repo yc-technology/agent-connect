@@ -31,9 +31,18 @@ export async function runBotService(
   const runtimeDir = agentConnectDir(env);
   const existingRuntime = await readRuntimeJson(runtimeDir);
   if (existingRuntime && (await tcpProbe(existingRuntime.httpHost, existingRuntime.httpPort, 500))) {
-    throw new Error(
-      `another agent-connect service is running at ${existingRuntime.httpHost}:${existingRuntime.httpPort} (pid ${existingRuntime.pid})`
+    // Exit code 2 is the "explicit bail, don't respawn me" signal to the
+    // supervisor. Throwing here (which propagates to main()'s catch and
+    // exits code 1) is what produced the crash-restart loop seen in the
+    // wild: old daemon left a listener on the port, user upgraded the npm
+    // package, new server kept colliding and the supervisor kept retrying
+    // forever (8000+ cycles reported in one user's case). The supervisor
+    // checks `code === 2` and refuses to respawn.
+    process.stderr.write(
+      `another agent-connect service is running at ${existingRuntime.httpHost}:${existingRuntime.httpPort} (pid ${existingRuntime.pid}). ` +
+        `If you just upgraded the agc package, run \`agc stop --all\` then \`agc start --daemon\`.\n`
     );
+    process.exit(2);
   }
 
   if (config.enableMonitor) {

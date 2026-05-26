@@ -163,10 +163,23 @@ agc stop               # graceful shutdown of supervisor + server
 The supervisor lives at PID recorded in `~/.agent-connect/supervisor.json`.
 It polls `GET /healthz` every 10 s, triggers a restart after 3 consecutive
 failures, and respawns the server child with exponential backoff
-(1s/2s/5s/10s/30s) on unexpected exit. `agc restart` reloads whatever
-version of the bot is currently on disk — so `npm install -g
-@yc-tech/agent-connect-cli@latest && agc restart` upgrades cleanly without
-manual stop/start.
+(1s/2s/5s/10s/30s) on unexpected exit. It also gives up after 5 unintentional
+exits within 30 s (crash-loop backstop) to prevent the runaway-respawn
+scenario that bit a real user pre-0.3.5.
+
+**Upgrading a running daemon — stop FIRST, then npm i:**
+
+```bash
+agc stop --all                                       # kill supervisor + children
+npm install -g @yc-tech/agent-connect-cli@latest     # safe to upgrade now
+agc start --daemon                                   # clean start with new binaries
+```
+
+`agc restart` alone is NOT enough after an npm upgrade: the running
+supervisor was loaded with the old code in memory, and its idea of how to
+spawn / talk to the server child can diverge from the new on-disk source.
+The 0.3.5+ supervisor catches this with code-2 bail + backstop, but the
+cleanest path is always stop → install → start.
 
 The web console is served by the bot itself at `http://127.0.0.1:17666/`
 when running in daemon mode (or any production-built bot). During
