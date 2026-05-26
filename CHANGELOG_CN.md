@@ -9,6 +9,23 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.7 — 2026-05-26
+
+### ✨ 改进 — 目录 picker 从 `$HOME` 起步，不再用 `process.cwd()`
+
+用户绑定 topic 时，目录 picker 现在统一从用户 home 起步——不再受
+bot daemon 启动时 cwd 的影响。之前用 `process.cwd()`：dev 用户在
+仓库根跑 `pnpm dev` 还合理（cwd = 仓库根），但 npm 安装用户**完全
+不可预期**——他们在 `~` 跑 `agc start --daemon` 的话 daemon 永久
+锁 cwd=`~`，picker 也就永远开在 home（一堆 dotfiles + 隐藏目录）；
+若他们在 `/etc` 之类的地方跑，picker 就开在那里。
+
+home 是稳定的锚点——每个交互 shell 默认都回到 home，用户从已知
+位置用现有的 `..` / 子目录按钮往项目树深处钻就行。暂时没加 env
+覆盖；如果你的工作流需要，提 issue。
+
+---
+
 ## 0.3.6 — 2026-05-26
 
 ### 🐛 修复 — window picker 在 windowName / cwd 为空时渲染乱码行

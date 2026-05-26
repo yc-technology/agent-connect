@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.7 — 2026-05-26
+
+### ✨ Changed — directory picker opens at `$HOME`, not `process.cwd()`
+
+When a user binds a topic, the directory picker now starts at the
+user's home directory regardless of where the bot daemon was launched
+from. Previous behavior used `process.cwd()` — fine for dev users who
+ran `pnpm dev` from the repo root (cwd = repo), but unpredictable for
+npm-install users: a shell sitting at `~` when running
+`agc start --daemon` locked the daemon's cwd at `~` permanently (or
+worse, wherever they happened to be); the picker opened there forever.
+
+Home is the stable anchor — every interactive shell falls back to it,
+and users descend from a known location into their project tree with
+the existing `..` / subdirectory buttons. No env override yet; file
+an issue if your workflow needs one.
+
+---
+
 ## 0.3.6 — 2026-05-26
 
 ### 🐛 Fixed — window picker rendered garbage line on empty windowName / cwd

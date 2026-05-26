@@ -1,6 +1,7 @@
 import { Bot, InputFile, type Context } from "grammy";
 import { existsSync, statSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { BashCaptureManager } from "./bashCapture.js";
 import type { AgentType } from "./claudeCommand.js";
@@ -63,6 +64,14 @@ import { createGrammyBot } from "./telegramClient.js";
 import { isForumThreadId, PRIVATE_CHAT_THREAD_ID } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
 import { agentConnectDir } from "./utils.js";
+
+// Directory picker starts at $HOME. Previously this used `process.cwd()`
+// which was unpredictable for daemon-mode npm users: if they ran
+// `agc start --daemon` from any random shell cwd, the daemon inherited
+// that cwd permanently and the browser opened there. Home is the
+// stable, predictable starting point — users descend into their
+// project tree from a known anchor.
+const initialBrowsePath = (): string => homedir();
 
 export const CC_COMMANDS: Record<string, string> = {
   clear: "↗ Clear conversation history",
@@ -703,9 +712,9 @@ export async function textMessageHandler(
       return;
     }
 
-    const browser = buildDirectoryBrowser(process.cwd(), 0, { showHiddenDirs: config.showHiddenDirs });
+    const browser = buildDirectoryBrowser(initialBrowsePath(), 0, { showHiddenDirs: config.showHiddenDirs });
     userData[STATE_KEY] = STATE_BROWSING_DIRECTORY;
-    userData[BROWSE_PATH_KEY] = resolve(process.cwd());
+    userData[BROWSE_PATH_KEY] = resolve(initialBrowsePath());
     userData[BROWSE_PAGE_KEY] = browser.page;
     userData[BROWSE_DIRS_KEY] = browser.subdirs;
     await replyWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
@@ -1337,9 +1346,9 @@ async function handleWindowNewCallback(
 ): Promise<void> {
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
   clearWindowPickerState(userData);
-  const browser = buildDirectoryBrowser(process.cwd(), 0, { showHiddenDirs: config.showHiddenDirs });
+  const browser = buildDirectoryBrowser(initialBrowsePath(), 0, { showHiddenDirs: config.showHiddenDirs });
   userData[STATE_KEY] = STATE_BROWSING_DIRECTORY;
-  userData[BROWSE_PATH_KEY] = resolve(process.cwd());
+  userData[BROWSE_PATH_KEY] = resolve(initialBrowsePath());
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
   await editTextWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
@@ -1363,7 +1372,7 @@ async function handleDirectorySelectCallback(
     return;
   }
 
-  const currentPath = stringValue(userData[BROWSE_PATH_KEY], process.cwd());
+  const currentPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
   const newPath = resolve(currentPath, cachedDirs[index]!);
   if (!isDirectory(newPath)) {
     await ctx.answerCallbackQuery({ text: "Directory not found", show_alert: true });
@@ -1385,7 +1394,7 @@ async function handleDirectoryUpCallback(
   config: Pick<Config, "showHiddenDirs">
 ): Promise<void> {
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
-  const currentPath = stringValue(userData[BROWSE_PATH_KEY], process.cwd());
+  const currentPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
   const parent = dirname(resolve(currentPath));
   const browser = buildDirectoryBrowser(parent, 0, { showHiddenDirs: config.showHiddenDirs });
   userData[BROWSE_PATH_KEY] = parent;
@@ -1408,7 +1417,7 @@ async function handleDirectoryPageCallback(
     await ctx.answerCallbackQuery("Invalid data");
     return;
   }
-  const currentPath = stringValue(userData[BROWSE_PATH_KEY], process.cwd());
+  const currentPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
   const browser = buildDirectoryBrowser(currentPath, page, { showHiddenDirs: config.showHiddenDirs });
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
@@ -1440,7 +1449,7 @@ async function handleDirectoryConfirmCallback(
     return;
   }
 
-  const selectedPath = stringValue(userData[BROWSE_PATH_KEY], process.cwd());
+  const selectedPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
   clearBrowseState(userData);
 
   const sessions = await sessionManager.listSessionsForDirectory(selectedPath, config.agentType);
@@ -1490,7 +1499,7 @@ async function handleSessionSelectCallback(
   }
 
   const session = sessions[index]!;
-  const selectedPath = stringValue(userData[SELECTED_PATH_KEY], process.cwd());
+  const selectedPath = stringValue(userData[SELECTED_PATH_KEY], initialBrowsePath());
   clearSessionPickerState(userData);
   delete userData[SELECTED_PATH_KEY];
   await createAndBindWindow(
@@ -1524,7 +1533,7 @@ async function handleSessionNewCallback(
   tmuxManager: Pick<TmuxManager, "createWindow">
 ): Promise<void> {
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
-  const selectedPath = stringValue(userData[SELECTED_PATH_KEY], process.cwd());
+  const selectedPath = stringValue(userData[SELECTED_PATH_KEY], initialBrowsePath());
   clearSessionPickerState(userData);
   delete userData[SELECTED_PATH_KEY];
   await createAndBindWindow(ctx, userData, userId, selectedPath, threadId, config.agentType, sessionManager, tmuxManager);
