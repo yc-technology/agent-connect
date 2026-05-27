@@ -37,6 +37,8 @@ Daemon (supervised, auto-restart):
   agc restart            Restart the server child (supervisor stays up)
   agc status             Show daemon status + last health check
   agc logs               Tail \`current.log\` (Ctrl+C to stop)
+  agc upgrade            Self-upgrade: stop → npm i -g @yc-tech/agent-connect-cli@latest → restart
+  agc upgrade --tag X    Install dist-tag X instead of latest (e.g. \`beta\`)
   agc supervise          (internal) the supervisor entrypoint — not for direct use
 
 Hooks:
@@ -575,6 +577,126 @@ async function sendFile(argv: string[]): Promise<number> {
   }
 }
 
+async function upgrade(opts: { tag?: string } = {}): Promise<number> {
+  const tag = opts.tag ?? "latest";
+  const pkgSpec = `@yc-tech/agent-connect-cli@${tag}`;
+  const dir = agentConnectDir(process.env);
+
+  // Detect current run mode before we touch anything. We need to know
+  // whether to restart in daemon mode at the end (was-daemon → start
+  // --daemon; was-foreground → tell the user to start it themselves
+  // since we can't reattach to their original terminal; nothing-running
+  // → just install).
+  const supervisor = await readSupervisorJson(dir);
+  const runtime = await readRuntimeJson(dir);
+  const daemonWasRunning = supervisor !== null && isPidAlive(supervisor.supervisorPid);
+  const foregroundWasRunning =
+    runtime !== null &&
+    isPidAlive(runtime.pid) &&
+    (!supervisor || runtime.pid !== supervisor.serverPid);
+
+  process.stdout.write(`agc upgrade → ${pkgSpec}\n`);
+  process.stdout.write(`  daemon running:     ${daemonWasRunning ? "yes" : "no"}\n`);
+  process.stdout.write(`  foreground running: ${foregroundWasRunning ? `yes (pid ${runtime!.pid})` : "no"}\n`);
+  process.stdout.write("\n");
+
+  // Step 1 — stop everything we can find. --all so a foreground bot
+  // running in parallel also gets killed; we're about to overwrite the
+  // binary on disk and don't want a stale-version process still talking
+  // to Telegram afterward.
+  if (daemonWasRunning || foregroundWasRunning) {
+    process.stdout.write("[1/3] stopping running bot…\n");
+    const stopCode = await stopAll({ force: false, all: true });
+    if (stopCode !== 0) {
+      process.stderr.write("stop failed — refusing to continue upgrade with a possibly-half-stopped daemon\n");
+      return stopCode;
+    }
+    // Brief grace so the supervisor's cleanup hooks finish writing
+    // (runtime.json removal, log flush). Not strictly required —
+    // stopAll already awaits SIGTERM ack — but cheap insurance.
+    await sleep(500);
+  } else {
+    process.stdout.write("[1/3] nothing to stop\n");
+  }
+
+  // Step 2 — npm install. We're still running the OLD binary in this
+  // process, so this is safe; macOS/Linux keep the running file in
+  // memory even as npm overwrites the on-disk path. Subsequent agc
+  // invocations (including the spawn in step 3) read the NEW file.
+  process.stdout.write(`\n[2/3] installing ${pkgSpec}…\n`);
+  const installCode = await new Promise<number>((resolveInstall) => {
+    const child = spawn("npm", ["i", "-g", pkgSpec], {
+      stdio: "inherit",
+      env: process.env
+    });
+    child.on("close", (code) => resolveInstall(code ?? 1));
+    child.on("error", (err) => {
+      process.stderr.write(`npm spawn failed: ${err.message}\n`);
+      resolveInstall(1);
+    });
+  });
+  if (installCode !== 0) {
+    process.stderr.write(`\nnpm install failed (exit ${installCode}).\n`);
+    process.stderr.write(
+      `Bot is stopped. Run \`agc start --daemon\` to start with the previous version, or fix the install error and rerun \`agc upgrade\`.\n`
+    );
+    return installCode;
+  }
+
+  // Step 3 — start the new version. We spawn `node <cliScript> start --daemon`
+  // where cliScript is the on-disk path npm just overwrote. The fresh
+  // Node process loads that file from disk, picking up the new code.
+  // The currently-executing process is still the OLD code, which is
+  // fine — we're about to exit.
+  if (!daemonWasRunning && !foregroundWasRunning) {
+    process.stdout.write(`\n[3/3] upgrade complete — run \`agc start --daemon\` to launch.\n`);
+    return 0;
+  }
+  if (foregroundWasRunning && !daemonWasRunning) {
+    process.stdout.write(
+      `\n[3/3] upgrade complete — your previous bot was running in the foreground.\n` +
+        `      Restart it manually from your original terminal (it can't reattach from here).\n`
+    );
+    return 0;
+  }
+
+  process.stdout.write("\n[3/3] starting daemon with new version…\n");
+  const cliScript = fileURLToPath(import.meta.url);
+  const startCode = await new Promise<number>((resolveStart) => {
+    const child = spawn(process.execPath, [cliScript, "start", "--daemon"], {
+      stdio: "inherit",
+      env: process.env
+    });
+    child.on("close", (code) => resolveStart(code ?? 1));
+    child.on("error", (err) => {
+      process.stderr.write(`start spawn failed: ${err.message}\n`);
+      resolveStart(1);
+    });
+  });
+  if (startCode !== 0) {
+    process.stderr.write(`\nstart --daemon failed (exit ${startCode}).\n`);
+    return startCode;
+  }
+
+  // Poll for healthz up to ~6s before declaring victory. Startup races
+  // through supervisor → child → fastify listen → first healthz; we
+  // want the user to see ✓ instead of having to manually `agc status`.
+  process.stdout.write("\nverifying daemon health…\n");
+  const deadline = Date.now() + 6000;
+  while (Date.now() < deadline) {
+    await sleep(400);
+    const sup = await readSupervisorJson(dir);
+    if (sup && isPidAlive(sup.supervisorPid) && sup.lastHealthCheckOk) {
+      process.stdout.write(`✓ daemon healthy (supervisor pid ${sup.supervisorPid}, server pid ${sup.serverPid})\n`);
+      return 0;
+    }
+  }
+  process.stdout.write(
+    `daemon spawned but healthz hasn't passed yet. Check \`agc status\` / \`agc logs\` if it doesn't come up shortly.\n`
+  );
+  return 0;
+}
+
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const command = argv[0] ?? "start";
 
@@ -608,6 +730,21 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
   if (command === "status") return showStatus();
   if (command === "logs") return tailLogs();
   if (command === "send") return sendFile(argv);
+  if (command === "upgrade") {
+    const rest = argv.slice(1);
+    // --tag <name> or --tag=<name>, defaults to "latest"
+    let tag: string | undefined;
+    for (let i = 0; i < rest.length; i += 1) {
+      const arg = rest[i]!;
+      if (arg === "--tag" && rest[i + 1]) {
+        tag = rest[i + 1];
+        i += 1;
+      } else if (arg.startsWith("--tag=")) {
+        tag = arg.slice("--tag=".length);
+      }
+    }
+    return upgrade(tag !== undefined ? { tag } : {});
+  }
 
   process.stderr.write(`Unknown command: ${command}\n\n${HELP_TEXT}`);
   return 1;

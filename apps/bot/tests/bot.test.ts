@@ -24,7 +24,6 @@ import {
   topicClosedHandler,
   topicEditedHandler,
   unsupportedContentHandler,
-  unbindCommand,
   usageCommand
 } from "../src/agent-connect/bot.js";
 import { WindowState, type HistoryMessage } from "../src/agent-connect/session.js";
@@ -268,39 +267,6 @@ describe("bot session commands", () => {
     const [text] = (reply as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(text).toContain("🪟 @5 · creative-project");
     expect(text).toContain("not found in tmux");
-  });
-
-  it("unbind removes a topic binding without killing the window", async () => {
-    const reply = vi.fn();
-    const unbindThread = vi.fn(() => "@5");
-    const messageQueue = {
-      clearStatusMsgInfo: vi.fn(),
-      clearToolMsgIdsForTopic: vi.fn(),
-      clearLastAssistantMessageId: vi.fn()
-    };
-
-    await unbindCommand(
-      {
-        from: { id: 12345 } as never,
-        msg: { message_thread_id: 42 } as never,
-        reply: reply as never
-      },
-      config,
-      {
-        getWindowForThread: () => "@5",
-        getDisplayName: () => "project",
-        unbindThread,
-        resolveChatId: () => -100
-      },
-      {
-        messageQueue
-      }
-    );
-
-    expect(unbindThread).toHaveBeenCalledWith(12345, 42);
-    expect(messageQueue.clearStatusMsgInfo).toHaveBeenCalledWith(12345, 42);
-    expect(messageQueue.clearToolMsgIdsForTopic).toHaveBeenCalledWith(12345, 42);
-    expect(reply).toHaveBeenCalledWith(expect.stringContaining("Topic unbound"), formattedOptions);
   });
 
   it("kill removes the tmux window, unbinds, clears state, and deletes the topic", async () => {
@@ -842,6 +808,7 @@ describe("bot text and picker flow", () => {
         getDisplayName: () => "",
         unbindThread: vi.fn(),
         sendToWindow: vi.fn(),
+        getSessionByWindow: vi.fn(() => ({ window_id: "@5" }) as never),
         setTopicProbeMessageId
       },
       {
@@ -866,6 +833,55 @@ describe("bot text and picker flow", () => {
     expect(setTopicProbeMessageId).toHaveBeenCalledWith(12345, 42, 777);
   });
 
+  it("hides unmanaged windows (no session row) from the picker and falls through to directory browser", async () => {
+    // Reported: a user's tmux had two stale zsh windows (@0, @1) with
+    // no agent ever running in them. The picker offered them as bind
+    // candidates because they happened to be in tmux's window list,
+    // and the user kept binding to them — sending Telegram text into
+    // bare zsh stdin and getting no response. Filter by session-row
+    // presence (the bot's authoritative "this window had a SessionStart
+    // hook fire for it") to keep raw shell windows out of the picker.
+    const store = new BotStateStore();
+    const reply = vi.fn();
+
+    await textMessageHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_id: 777, message_thread_id: 42, text: "hello" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => null,
+        iterThreadBindings: noBindings,
+        getDisplayName: () => "",
+        unbindThread: vi.fn(),
+        sendToWindow: vi.fn(),
+        getSessionByWindow: vi.fn(() => null), // no session => unmanaged
+        setTopicProbeMessageId: vi.fn()
+      },
+      {
+        listWindows: vi.fn(async () => [
+          { windowId: "@0", windowName: "main", cwd: "/Users/foo", paneCurrentCommand: "zsh" }
+        ]),
+        findWindowById: vi.fn()
+      },
+      store
+    );
+
+    // No picker → falls through to the directory browser entry point.
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining("Select Working Directory"),
+      expect.objectContaining({ reply_markup: expect.any(Object) })
+    );
+    expect(store.userData(12345)).toMatchObject({
+      state: "browsing_directory",
+      _pending_thread_id: 42
+    });
+  });
+
   it("shows an existing-window picker in a private chat", async () => {
     const store = new BotStateStore();
     const reply = vi.fn();
@@ -884,7 +900,8 @@ describe("bot text and picker flow", () => {
         iterThreadBindings: noBindings,
         getDisplayName: () => "",
         unbindThread: vi.fn(),
-        sendToWindow: vi.fn()
+        sendToWindow: vi.fn(),
+        getSessionByWindow: vi.fn(() => ({ window_id: "@5" }) as never)
       },
       {
         listWindows: vi.fn(async () => [
@@ -930,7 +947,8 @@ describe("bot text and picker flow", () => {
         iterThreadBindings: noBindings,
         getDisplayName: () => "project",
         unbindThread: vi.fn(),
-        sendToWindow
+        sendToWindow,
+        getSessionByWindow: vi.fn(() => null)
       },
       {
         listWindows: vi.fn(),

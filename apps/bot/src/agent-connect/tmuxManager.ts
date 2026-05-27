@@ -84,22 +84,33 @@ export class TmuxManager {
   }
 
   async listWindowsAuthoritative(): Promise<ListWindowsResult> {
-    const format = [
-      "#{window_id}",
-      "#{window_name}",
-      "#{pane_current_path}",
-      "#{pane_current_command}"
-    ].join("\t");
-    const result = await this.execTmux([
-      "list-windows",
-      "-t",
-      this.config.tmuxSessionName,
-      "-F",
-      format
-    ], { rejectOnError: false });
+    // Probe-based listing. A user's deployment was observed producing
+    // mangled multi-field `-F` rows where the `\t` separators between
+    // fields didn't survive — the picker showed
+    // `@0\tmain\t/Users/.../workspace_zsh` as one giant concatenated
+    // windowId, and every downstream `-t <id>` op failed because no
+    // real window had that id. Root cause unknown (tmux version /
+    // locale / shell wrapper / encoding quirk); root-cause-fixing it
+    // is brittle anyway since we can't enumerate every broken setup.
+    //
+    // Instead: do not parse multi-field output. Single-field calls
+    // can't be mis-split. We get the canonical ID list in one call,
+    // then probe each id individually for metadata using `display-message`.
+    // N+1 tmux execs per refresh; tmux IPC is local and sub-ms, and the
+    // poll cadence is 1-2s, so the cost is fine.
+    const idResult = await this.execTmux(
+      [
+        "list-windows",
+        "-t",
+        this.config.tmuxSessionName,
+        "-F",
+        "#{window_id}"
+      ],
+      { rejectOnError: false }
+    );
 
-    if (result.code !== 0) {
-      const stderr = result.stderr.trim();
+    if (idResult.code !== 0) {
+      const stderr = idResult.stderr.trim();
       const lower = stderr.toLowerCase();
       let reason: "tmux-unreachable" | "session-missing" | "exec-failed" = "exec-failed";
       if (lower.includes("no server running") || lower.includes("error connecting")) {
@@ -110,19 +121,51 @@ export class TmuxManager {
       return {
         ok: false,
         reason,
-        detail: stderr || `tmux list-windows exit ${result.code}`
+        detail: stderr || `tmux list-windows exit ${idResult.code}`
       };
     }
 
-    const windows = result.stdout
+    const windowIds = idResult.stdout
       .split(/\r?\n/)
-      .filter(Boolean)
-      .map((line) => {
-        const [windowId = "", windowName = "", cwd = "", paneCurrentCommand = ""] =
-          line.split("\t");
-        return { windowId, windowName, cwd, paneCurrentCommand };
-      })
-      .filter((window) => window.windowName !== this.config.tmuxMainWindowName);
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    const windows: TmuxWindow[] = [];
+    for (const windowId of windowIds) {
+      // Per-window probe. Newline as field separator inside `-p` is
+      // safer than `\t` — newlines are fundamental to terminal I/O,
+      // anything that swallows them would have broken `list-windows`
+      // line splitting too. If the probe fails (window vanished
+      // between the list call and the probe, or tmux gives some
+      // unexpected output), skip the row + warn.
+      const meta = await this.execTmux(
+        [
+          "display-message",
+          "-t",
+          windowId,
+          "-p",
+          "#{window_name}\n#{pane_current_path}\n#{pane_current_command}"
+        ],
+        { rejectOnError: false }
+      );
+      if (meta.code !== 0) {
+        logger().warn(
+          {
+            tmuxSession: this.config.tmuxSessionName,
+            windowId,
+            stderr: meta.stderr.trim()
+          },
+          "tmux display-message probe failed; skipping window"
+        );
+        continue;
+      }
+      const lines = meta.stdout.split("\n");
+      const windowName = (lines[0] ?? "").trimEnd();
+      const cwd = (lines[1] ?? "").trimEnd();
+      const paneCurrentCommand = (lines[2] ?? "").trimEnd();
+      if (windowName === this.config.tmuxMainWindowName) continue;
+      windows.push({ windowId, windowName, cwd, paneCurrentCommand });
+    }
 
     return { ok: true, windows };
   }

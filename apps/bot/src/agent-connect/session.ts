@@ -352,7 +352,14 @@ export class SessionManager {
   }
 
   getDisplayName(windowId: string): string {
-    return this.windowDisplayNames[windowId] ?? windowId;
+    // `??` (nullish coalescing) only handles null/undefined — an empty
+    // string passes through. tmux can produce empty window_name in
+    // edge cases (`tmux rename-window ""`, certain `automatic-rename`
+    // states), which used to surface as a literally-empty Telegram
+    // message like `Bound to window \`\``. Treat empty as "no name set"
+    // and fall back to the windowId.
+    const name = this.windowDisplayNames[windowId];
+    return name && name.length > 0 ? name : windowId;
   }
 
   updateDisplayName(windowId: string, newName: string): void {

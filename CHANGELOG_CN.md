@@ -9,6 +9,82 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.8 — 2026-05-27
+
+五个 tmux window 生命周期 / picker 修复，加一个自升级命令。线上某个
+用户反馈：bind picker 给他列出来一些 bare zsh window（带乱码：
+`(unnamed @0\tmain\t/Users/foo/proj\tzsh)`，解析也挂了叠加在一起），
+而且反复 `/unbind` 之后 `projA`、`projA-2`、`projA-3` 一堆孤儿
+window 没法清。
+
+### 🐛 修复 — `listWindowsAuthoritative` 改成 probe-based 列出
+
+不再相信多字段 `tmux list-windows -F` 的 `\t` 分隔符能存活。线上至少
+一个用户的环境里 tab 没了，结果所有字段被塞进一个超长的 windowId
+里，下游 `-t <id>` 全部失败。
+
+新流程：
+
+1. 拿 id 列表用单字段 `-F '#{window_id}'`——单字段输出没有分隔符可丢
+2. 对每个 id 单独 `tmux display-message -t <id> -p`，用**换行**分隔
+   `window_name` / `pane_current_path` / `pane_current_command`。换行
+   是终端 IO 的基本单位，比 `\t` 牢固得多。
+3. probe 挂了（window 在 list 和 probe 之间消失）→ 跳过 + warn 带 id
+
+代价：每次 refresh 多 N 次 tmux exec，但 tmux 本地 IPC sub-ms，
+poll 间隔 1-2s——可以忽略。
+
+### 🐛 修复 — bind picker 只显示 bot 管理过的 agent window
+
+`textMessageHandler` 过滤 unbound window 时新增
+`SessionManager.getSessionByWindow()` 校验——只保留 bot 真注册过
+SessionStart hook 的 window。用户自己开的 bare `zsh` / `bash` window
+不再出现在 picker 里，直接 fall through 到 cwd picker 起新会话。
+
+判据用 session 表存在性而不是 `pane_current_command`，是因为
+Claude Code 把自己的进程名设成版本号字符串（比如 `2.1.147`），
+按命令名字面过滤会跨版本 / 跨 agent 漏掉。
+
+### 💥 移除 — `/unbind`
+
+0.3.8 之前 `/unbind` 是软解绑：window + claude session 留着不动。
+结果反复 `/unbind` + New Session 攒一堆孤儿。改成同时杀 window 之后
+和 `/kill` 只差"要不要也删 TG topic"——而 `/kill` 在 bot 没权限删
+topic 时就 fallback 成跟 `/unbind` 一样的行为。两个命令实际效果几乎
+一样反而困扰用户，干脆删掉 `/unbind`。要"全清掉"用 `/kill`（如果
+bot 有 topic 管理权限会顺便删 topic；在 TG 客户端关 / 删 topic 也会
+被 `topicClosedHandler` 自动跟进）。
+
+### 🐛 修复 — 空 windowName 兜底
+
+两个相关漏洞：
+
+- `SessionManager.getDisplayName` 用了 `??`（nullish coalescing），
+  只兜 null / undefined，空字符串会穿透到所有 status 模板里渲染成
+  "Window '' no longer exists" 之类。现在空串也兜底回 windowId。
+- `handleWindowBindCallback` 的确认消息 `✅ Bound to window
+  \`${windowName}\`` 直接用了原始 windowName，同样的空串问题渲染成
+  `Bound to window \`\``（字面空反引号）。也改成 windowId 兜底。
+
+### ✨ 新增 — `agc upgrade` 自升级命令
+
+```bash
+agc upgrade                # @latest
+agc upgrade --tag beta     # 指定 dist-tag
+```
+
+把之前文档里讲的"三步手动升级"（`agc stop --all` → `npm i -g
+@yc-tech/agent-connect-cli@<tag>` → `agc start --daemon` + healthz
+验证）自动化。升级前会检测是 daemon 模式还是 foreground 模式：
+daemon 用户会自动重启 daemon；foreground 用户的话会提示自己回原
+terminal 起（spawn 起来用户也看不到日志）。
+
+实现依赖 Unix 的一个特性：进程跑起来后 binary 即便被 npm 覆盖了，
+内存里的旧版本还在跑，后续新 spawn 的进程才读盘加载新代码——所以
+升级器自己跑到一半不会突然崩。
+
+---
+
 ## 0.3.7 — 2026-05-26
 
 ### ✨ 改进 — 目录 picker 从 `$HOME` 起步，不再用 `process.cwd()`

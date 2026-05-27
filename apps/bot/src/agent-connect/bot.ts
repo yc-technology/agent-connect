@@ -94,7 +94,6 @@ export const BOT_COMMANDS = [
   { command: "history", description: "Message history for this topic" },
   { command: "screenshot", description: "Terminal screenshot with control keys" },
   { command: "esc", description: "Send Escape to interrupt Claude" },
-  { command: "unbind", description: "Unbind topic from session (keeps window running)" },
   { command: "usage", description: "Show Claude Code usage remaining" },
   ...Object.entries(CC_COMMANDS).map(([command, description]) => ({ command, description }))
 ];
@@ -387,41 +386,6 @@ export async function escCommand(
   await replyWithFallback(ctx, "⎋ Sent Escape");
 }
 
-export async function unbindCommand(
-  ctx: Pick<Context, "from" | "msg" | "reply">,
-  config: Pick<Config, "isUserAllowed">,
-  sessionManager: Pick<SessionManager, "getWindowForThread" | "getDisplayName" | "unbindThread"> &
-    Partial<Pick<SessionManager, "resolveChatId">>,
-  options: BotHandlerOptions = {}
-): Promise<void> {
-  if (!isUserAllowed(ctx.from?.id, config)) return;
-
-  const threadId = getThreadId(ctx);
-  if (threadId === null) {
-    await replyWithFallback(ctx, "❌ This command only works in a topic.");
-    return;
-  }
-
-  const windowId = sessionManager.getWindowForThread(ctx.from!.id, threadId);
-  if (!windowId) {
-    await replyWithFallback(ctx, "❌ No session bound to this topic.");
-    return;
-  }
-
-  const display = sessionManager.getDisplayName(windowId);
-  sessionManager.unbindThread(ctx.from!.id, threadId);
-  const cleanupOptions = hasResolveChatId(sessionManager)
-    ? { ...options, routing: sessionManager }
-    : options;
-  await clearTopicState(ctx.from!.id, threadId, cleanupOptions);
-  await replyWithFallback(
-    ctx,
-    `✅ Topic unbound from window '${display}'.\n` +
-      "The Claude session is still running in tmux.\n" +
-      "Send a message to bind to a new session."
-  );
-}
-
 export async function killCommand(
   ctx: KillCommandContextLike,
   config: Pick<Config, "isUserAllowed">,
@@ -639,6 +603,7 @@ export async function textMessageHandler(
     | "getDisplayName"
     | "unbindThread"
     | "sendToWindow"
+    | "getSessionByWindow"
   > &
     Partial<Pick<SessionManager, "setTopicProbeMessageId">>,
   tmuxManager: Pick<TmuxManager, "listWindows" | "findWindowById">,
@@ -693,8 +658,22 @@ export async function textMessageHandler(
   if (!boundWindowId) {
     const windows = await tmuxManager.listWindows();
     const boundIds = new Set([...sessionManager.iterThreadBindings()].map(([, , windowId]) => windowId));
+    // Only offer windows that the bot has actually registered as managed
+    // (i.e. a SessionStart hook fired for them and a row exists in the
+    // sessions table). Without this, random user-owned tmux windows
+    // (zsh, vim, dev servers) showed up as bind candidates — the
+    // reporter's deployment had two bare zsh windows the picker was
+    // happily offering. Binding to a non-agent window means our
+    // sendKeys deposits the user's Telegram text into zsh stdin, which
+    // is at best confusing and at worst destructive.
+    //
+    // We use sessions-table presence, not `pane_current_command`,
+    // because Claude Code sets its own process title to its version
+    // string (e.g. "2.1.147") — there's no reliable command-name
+    // allowlist to match on across versions/agents.
     const unbound = windows
       .filter((window) => !boundIds.has(window.windowId))
+      .filter((window) => sessionManager.getSessionByWindow(window.windowId) !== null)
       .map((window) => ({
         windowId: window.windowId,
         windowName: window.windowName,
@@ -1121,7 +1100,6 @@ export function registerBotHandlers(
   bot.command("screenshot", (ctx) => screenshotCommand(ctx, config, sessionManager, tmuxManager));
   bot.command("esc", (ctx) => escCommand(ctx, config, sessionManager, tmuxManager));
   bot.command("status", (ctx) => statusCommand(ctx, config, sessionManager, tmuxManager));
-  bot.command("unbind", (ctx) => unbindCommand(ctx, config, sessionManager, handlerOptions));
   bot.command("kill", (ctx) => killCommand(ctx, config, sessionManager, tmuxManager, handlerOptions));
   bot.command("usage", (ctx) => usageCommand(ctx, config, sessionManager, tmuxManager));
   for (const command of Object.keys(CC_COMMANDS)) {
@@ -1331,7 +1309,13 @@ async function handleWindowBindCallback(
 
   clearWindowPickerState(userData);
   sessionManager.bindThread(userId, threadId, selectedWindowId, window.windowName);
-  await editTextWithFallback(ctx, `✅ Bound to window \`${window.windowName}\``);
+  // tmux can produce empty windowName in edge cases — fall back to
+  // the windowId so the confirmation message stays informative
+  // instead of rendering `Bound to window \`\`` (literal empty
+  // backticks, since our markdown converter doesn't form a code
+  // entity around empty content).
+  const displayName = window.windowName || window.windowId;
+  await editTextWithFallback(ctx, `✅ Bound to window \`${displayName}\``);
 
   await sendPendingText(ctx, userData, selectedWindowId, sessionManager);
   delete userData[PENDING_THREAD_ID_KEY];
@@ -1632,8 +1616,3 @@ function isDirectory(path: string): boolean {
   }
 }
 
-function hasResolveChatId(
-  value: Partial<Pick<SessionManager, "resolveChatId">>
-): value is Pick<SessionManager, "resolveChatId"> {
-  return typeof value.resolveChatId === "function";
-}

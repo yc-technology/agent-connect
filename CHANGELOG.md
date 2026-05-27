@@ -9,6 +9,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.8 — 2026-05-27
+
+Five lifecycle / picker fixes plus a new self-upgrade command.
+Reported from a deployment where the bind picker offered bare-shell
+tmux windows (rendered as `(unnamed @0\tmain\t/Users/foo/proj\tzsh)`
+because parsing was also broken on top of the wrong-window-offered
+issue), and repeated `/unbind` cycles piled up `projA`, `projA-2`,
+`projA-3` orphans nobody could clean up.
+
+### 🐛 Fixed — `listWindowsAuthoritative` switches to probe-based listing
+
+Stopped trusting multi-field `tmux list-windows -F` output to round-trip
+`\t` separators. On at least one user's setup the tabs didn't survive,
+which collapsed every field into a single mangled windowId and made
+every downstream `-t <id>` operation fail.
+
+The new flow:
+
+1. Fetch the canonical id list in a single-field call
+   (`-F '#{window_id}'`) — single-field output has nothing that could
+   be mis-split.
+2. For each id, run `tmux display-message -t <id> -p` with a newline-
+   separated format to fetch `window_name` / `pane_current_path` /
+   `pane_current_command`. Newlines are fundamental to terminal I/O
+   and far safer separators than `\t`.
+3. Probes that fail (window vanished between list and probe) skip the
+   row + `warn` with the windowId.
+
+Cost is N+1 tmux execs per refresh instead of 1, but tmux IPC is
+local sub-ms and the poller runs at 1-2s — fine.
+
+### 🐛 Fixed — bind picker only shows managed agent windows
+
+`textMessageHandler` now filters unbound windows by
+`SessionManager.getSessionByWindow()` — keep only windows the bot has
+actually registered a SessionStart hook for. Raw `zsh` / `bash`
+windows that the user never started an agent in are no longer offered
+in the bind picker; the user falls through to the directory browser
+to spawn a fresh session instead.
+
+We use sessions-table presence rather than `pane_current_command`,
+because Claude Code sets its own process title to its version string
+(e.g. `2.1.147`) — there's no reliable command-name allowlist that
+holds across versions and agents.
+
+### 💥 Removed — `/unbind`
+
+Pre-0.3.8 `/unbind` was a soft disconnect that left the tmux window +
+claude session alive, which produced orphan windows piling up across
+repeated `/unbind` → New Session cycles. Converting it to also kill
+the window made it functionally identical to `/kill` minus the
+topic-deletion attempt — and `/kill` falls back to the same behavior
+when topic deletion fails. Two commands with effectively the same
+outcome was confusing, so `/unbind` is gone. Use `/kill` for "tear
+this down" (also tries to delete the topic if the bot has permission;
+`topicClosedHandler` already cleans up when you close/delete the
+topic from the Telegram UI).
+
+### 🐛 Fixed — empty windowName fallbacks
+
+Two related empty-string holes:
+
+- `SessionManager.getDisplayName` used `??` (nullish coalescing),
+  which only catches null/undefined; an empty windowName in
+  `windowDisplayNames` passed through and surfaced as a literally
+  empty name in status templates ("Window '' no longer exists").
+  Now falls back to the windowId when the name is empty.
+- `handleWindowBindCallback`'s confirmation `✅ Bound to window
+  \`${windowName}\`` used the raw windowName and produced `Bound to
+  window \`\`` (literal empty backticks) for the same case. Now also
+  falls back to the windowId.
+
+### ✨ Added — `agc upgrade` self-upgrade command
+
+```bash
+agc upgrade                # @latest
+agc upgrade --tag beta     # @beta, or any dist-tag
+```
+
+Automates the three-step upgrade dance the docs used to walk through
+by hand: `agc stop --all` → `npm i -g @yc-tech/agent-connect-cli@<tag>`
+→ `agc start --daemon` + healthz verification. Detects pre-upgrade
+run mode so it only re-launches in daemon mode if the daemon was
+running (foreground bots can't be reattached from the upgrade
+process's terminal — those are surfaced as "restart it yourself").
+
+The implementation relies on a Unix property: the running process
+keeps its old binary file in memory even when npm overwrites the
+path, so subsequent invocations naturally pick up the new code
+without crashing the upgrader mid-flight.
+
+---
+
 ## 0.3.7 — 2026-05-26
 
 ### ✨ Changed — directory picker opens at `$HOME`, not `process.cwd()`
