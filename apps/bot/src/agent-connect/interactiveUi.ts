@@ -3,6 +3,9 @@ import {
   CB_ASK_ENTER,
   CB_ASK_ESC,
   CB_ASK_LEFT,
+  CB_ASK_LITERAL_D,
+  CB_ASK_LITERAL_N,
+  CB_ASK_LITERAL_Y,
   CB_ASK_REFRESH,
   CB_ASK_RIGHT,
   CB_ASK_SPACE,
@@ -78,6 +81,22 @@ export function buildInteractiveKeyboard(windowId: string, uiName = ""): InlineK
     text: label,
     callback_data: `${prefix}${windowId}`.slice(0, 64)
   });
+
+  // SessionSurvey is the Claude data-usage prompt — three letter shortcuts
+  // (y/n/d) instead of nav keys. The standard arrow/Enter keyboard would
+  // just be confusing here, so render a dedicated 3-button row.
+  if (uiName === "SessionSurvey") {
+    return {
+      inline_keyboard: [
+        [
+          button("✅ Yes", CB_ASK_LITERAL_Y),
+          button("❌ No", CB_ASK_LITERAL_N),
+          button("🚫 Don't ask again", CB_ASK_LITERAL_D)
+        ]
+      ]
+    };
+  }
+
   const verticalOnly = uiName === "RestoreCheckpoint";
 
   const rows: InlineKeyboardMarkupLike["inline_keyboard"] = [

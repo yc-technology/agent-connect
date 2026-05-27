@@ -16,6 +16,9 @@ import {
   CB_ASK_ENTER,
   CB_ASK_ESC,
   CB_ASK_LEFT,
+  CB_ASK_LITERAL_D,
+  CB_ASK_LITERAL_N,
+  CB_ASK_LITERAL_Y,
   CB_ASK_REFRESH,
   CB_ASK_RIGHT,
   CB_ASK_SPACE,
@@ -120,6 +123,7 @@ const INTERACTIVE_KEY_SEND_MAP: Array<{
   label: string;
   refresh: boolean;
   clear?: boolean;
+  literal?: boolean;
 }> = [
   { prefix: CB_ASK_UP, key: "Up", label: "↑", refresh: true },
   { prefix: CB_ASK_DOWN, key: "Down", label: "↓", refresh: true },
@@ -128,7 +132,14 @@ const INTERACTIVE_KEY_SEND_MAP: Array<{
   { prefix: CB_ASK_ENTER, key: "Enter", label: "⏎ Enter", refresh: true },
   { prefix: CB_ASK_SPACE, key: "Space", label: "␣ Space", refresh: true },
   { prefix: CB_ASK_TAB, key: "Tab", label: "⇥ Tab", refresh: true },
-  { prefix: CB_ASK_ESC, key: "Escape", label: "⎋ Esc", refresh: false, clear: true }
+  { prefix: CB_ASK_ESC, key: "Escape", label: "⎋ Esc", refresh: false, clear: true },
+  // SessionSurvey single-letter shortcuts. `literal: true` so tmux sends
+  // the actual character (`tmux send-keys -l y`) rather than interpreting
+  // `y` as a named key. `clear: true` because the survey closes after
+  // answering and shouldn't keep refreshing a now-stale picker.
+  { prefix: CB_ASK_LITERAL_Y, key: "y", label: "✅ Yes", refresh: false, clear: true, literal: true },
+  { prefix: CB_ASK_LITERAL_N, key: "n", label: "❌ No", refresh: false, clear: true, literal: true },
+  { prefix: CB_ASK_LITERAL_D, key: "d", label: "🚫 Don't ask again", refresh: false, clear: true, literal: true }
 ];
 
 interface IncomingPhoto {
@@ -1033,7 +1044,7 @@ export async function interactiveCallbackHandler(
     return;
   }
 
-  await tmuxManager.sendKeys(window.windowId, action.key, { enter: false, literal: false });
+  await tmuxManager.sendKeys(window.windowId, action.key, { enter: false, literal: action.literal ?? false });
   if (action.clear) {
     await clearInteractiveMessage({ api, routing: sessionManager }, userId, threadId);
   } else if (action.refresh) {

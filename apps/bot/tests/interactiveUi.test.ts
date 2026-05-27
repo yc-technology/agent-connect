@@ -60,6 +60,18 @@ describe("interactive UI", () => {
     expect(restore.inline_keyboard.flat().map((button) => button.callback_data)).toContain("aq:down:@5");
   });
 
+  it("builds a dedicated y/n/d keyboard for SessionSurvey", () => {
+    const survey = buildInteractiveKeyboard("@5", "SessionSurvey");
+    const callbacks = survey.inline_keyboard.flat().map((button) => button.callback_data);
+    // Three letter shortcuts, no nav keys — pressing ↑/↓/Enter in the
+    // survey context would either be ignored or misinterpreted.
+    expect(callbacks).toEqual(["aq:lit-y:@5", "aq:lit-n:@5", "aq:lit-d:@5"]);
+    const labels = survey.inline_keyboard.flat().map((button) => button.text);
+    expect(labels).toContain("✅ Yes");
+    expect(labels).toContain("❌ No");
+    expect(labels).toContain("🚫 Don't ask again");
+  });
+
   it("sends an interactive UI message and tracks mode", async () => {
     const handled = await handleInteractiveUi(
       {

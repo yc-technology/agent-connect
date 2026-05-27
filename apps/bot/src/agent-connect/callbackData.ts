@@ -23,6 +23,14 @@ export const CB_ASK_SPACE = "aq:spc:";
 export const CB_ASK_TAB = "aq:tab:";
 export const CB_ASK_REFRESH = "aq:ref:";
 
+// Literal single-letter callbacks for Claude's session-quality survey
+// (`y: Yes  n: No  d: Don't ask again`). The survey blocks the TUI input
+// until answered — we detect it as a SessionSurvey pattern and surface
+// three buttons that send the respective letter via send-keys -l.
+export const CB_ASK_LITERAL_Y = "aq:lit-y:";
+export const CB_ASK_LITERAL_N = "aq:lit-n:";
+export const CB_ASK_LITERAL_D = "aq:lit-d:";
+
 export const CB_SESSION_SELECT = "rs:sel:";
 export const CB_SESSION_NEW = "rs:new";
 export const CB_SESSION_CANCEL = "rs:cancel";

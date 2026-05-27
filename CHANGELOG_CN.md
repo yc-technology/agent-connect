@@ -9,6 +9,39 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.10 — 2026-05-28
+
+### ✨ 新增 — Claude 数据授权弹窗 forward 到 Telegram 三键 picker
+
+线上反馈：一个 tmux window 看起来"卡死"——从 Telegram 发的消息进不
+到 Claude。根因：Claude 在等它周期性弹的数据授权弹窗
+（`⏺ Can Anthropic look at your session transcript? y: Yes  n: No
+d: Don't ask again`），这个弹窗会**锁住 TUI 输入行**直到你按 y/n/d。
+所有从 Telegram 走 `tmux send-keys` 进来的消息都被 modal 吞掉——
+用户看不到回应，bot 也不知道 survey 的存在。
+
+现在按其他 interactive UI 同样处理：
+
+- `terminalParser.ts` 新增 `SessionSurvey` pattern，匹配特征性的
+  `Can Anthropic look at your session transcript` 头 + `y: Yes  n:
+  No  d: Don't ask again` 尾。
+- `buildInteractiveKeyboard` 针对该 pattern 返回专用三键行
+  （`✅ Yes` / `❌ No` / `🚫 Don't ask again`），不用标准方向键 +
+  Enter 那套（在这里没意义）。
+- 新增 `aq:lit-y/n/d:` callback prefix，挂进 `INTERACTIVE_KEY_SEND_MAP`，
+  带 `literal: true` 让 tmux 发字面字符（`tmux send-keys -l y`），不
+  是把 `y` 当作 named key。
+
+点 `🚫 Don't ask again` 这次 session 后续就不会再弹。
+
+不需要 `requireChromeBelow`——`y: Yes ... n: No ... d: Don't ask`
+这个尾巴 prose 撞不上。
+
++3 测试：真实 pane 捕获能匹配、专用三键键盘布局、散文里提到 survey
+但没尾巴不会误报。
+
+---
+
 ## 0.3.9 — 2026-05-27
 
 ### 🐛 修复 — 散文里出现 picker 字符触发幻象 AskUserQuestion picker

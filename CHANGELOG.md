@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.10 — 2026-05-28
+
+### ✨ Added — SessionSurvey forwarded to Telegram as a 3-button picker
+
+Reported in the wild: a tmux window appeared "stuck" — messages sent
+from Telegram weren't reaching Claude. Root cause: Claude was blocked
+on its periodic data-usage survey
+(`⏺ Can Anthropic look at your session transcript? y: Yes  n: No  d:
+Don't ask again`), which holds the TUI input row hostage until you
+answer `y` / `n` / `d`. Every Telegram message routed via
+`tmux send-keys` was getting eaten by the modal — the user saw no
+response and the bot had no idea the survey existed.
+
+The survey is now treated like any other interactive UI:
+
+- New `SessionSurvey` pattern in `terminalParser.ts` matches the
+  characteristic `Can Anthropic look at your session transcript`
+  header + `y: Yes  n: No  d: Don't ask again` footer.
+- `buildInteractiveKeyboard` returns a dedicated 3-button row for this
+  pattern (`✅ Yes` / `❌ No` / `🚫 Don't ask again`) instead of the
+  standard arrow/Enter keyboard, which would just confuse here.
+- New `aq:lit-y/n/d:` callback prefixes wired into
+  `INTERACTIVE_KEY_SEND_MAP` with `literal: true` so tmux sends the
+  actual character (`tmux send-keys -l y`) rather than treating `y`
+  as a named key.
+
+Tap `🚫 Don't ask again` to suppress for the remainder of the session.
+
+No `requireChromeBelow` needed — the `y: Yes ... n: No ... d: Don't
+ask` footer is specific enough that no realistic prose collides.
+
++3 tests: pattern matches a real captured pane, dedicated keyboard
+layout, prose mentioning the survey doesn't false-positive without
+the footer.
+
+---
+
 ## 0.3.9 — 2026-05-27
 
 ### 🐛 Fixed — phantom AskUserQuestion picker when prose mentions picker glyphs

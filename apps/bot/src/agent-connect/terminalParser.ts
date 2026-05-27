@@ -66,6 +66,24 @@ const UI_PATTERNS: UIPattern[] = [
     minGap: 2
   },
   {
+    // Claude's periodic data-usage survey:
+    //   ⏺ Can Anthropic look at your session transcript to help us improve Claude Code?
+    //     Learn more: https://code.claude.com/docs/en/data-usage#session-quality-surveys
+    //     y: Yes    n: No     d: Don't ask again
+    // Blocks the TUI input row until y/n/d is pressed. Pre-0.3.10 this
+    // wasn't surfaced — bot users sent messages from Telegram and got
+    // silence because Claude was waiting on the survey. The `d` choice
+    // suppresses it permanently for the session.
+    //
+    // No requireChromeBelow because the question text + the very
+    // distinctive `y: Yes ... n: No ... d: Don'?t ask` bottom regex are
+    // specific enough that no realistic prose collides.
+    name: "SessionSurvey",
+    top: [/Can Anthropic look at your session transcript/],
+    bottom: [/^\s*y:\s*Yes\s+n:\s*No\s+d:\s*Don'?t ask/i],
+    minGap: 1
+  },
+  {
     name: "Settings",
     top: [/^\s*Settings:.*tab to cycle/, /^\s*Select model/],
     bottom: [/Esc to cancel/, /Esc to exit/, /Enter to confirm/, /^\s*Type to filter/],

@@ -401,6 +401,51 @@ describe("interactive UI extraction", () => {
     expect(extractInteractiveContent(proseDiscussingPicker)).toBeNull();
   });
 
+  it("extracts Claude SessionSurvey (data-usage prompt with y/n/d shortcuts)", () => {
+    // Real Claude pane during the periodic data-usage survey. Pre-0.3.10
+    // this wasn't detected → user sent messages from TG and got silence
+    // because Claude was blocked waiting on y/n/d.
+    const pane =
+      "  最近改了几个仓库的远端分支策略，先确认推送方式：\n" +
+      "  1. master\n" +
+      "  2. feature branch\n" +
+      "\n" +
+      "✻ Brewed for 2m 56s · 2 shells still running\n" +
+      "\n" +
+      "⏺ Can Anthropic look at your session transcript to help us improve Claude Code?\n" +
+      "  Learn more: https://code.claude.com/docs/en/data-usage#session-quality-surveys\n" +
+      "  y: Yes    n: No     d: Don't ask again\n" +
+      "\n" +
+      "─────\n" +
+      "❯\n" +
+      "─────\n" +
+      "  ⏵⏵ bypass permissions on · 2 shells · ← for agents · ↓ to manage\n";
+    const result = extractInteractiveContent(pane);
+    expect(result?.name).toBe("SessionSurvey");
+    expect(result?.content).toContain("Can Anthropic look at your session transcript");
+    expect(result?.content).toContain("y: Yes");
+    expect(result?.content).toContain("Don't ask again");
+    // Should NOT bleed earlier content (the push-method discussion) into
+    // the extracted prompt — that would confuse the TG user about what
+    // they're being asked.
+    expect(result?.content).not.toContain("master");
+    expect(result?.content).not.toContain("feature branch");
+  });
+
+  it("does not phantom-match SessionSurvey from prose mentioning the survey", () => {
+    // Belt-and-suspenders: even if we mention the survey question in
+    // chat (e.g. discussing this very feature), the very distinctive
+    // y/n/d bottom regex is what gates the match. Confirm the prose
+    // doesn't trigger when bottom isn't present.
+    const pane =
+      "⏺ When Claude finishes a long session it sometimes asks:\n" +
+      "  Can Anthropic look at your session transcript? Helps them improve the product.\n" +
+      "  You answer with one of three keys.\n" +
+      "─────\n" +
+      "❯\n";
+    expect(extractInteractiveContent(pane)).toBeNull();
+  });
+
   it("locks onto the latest AskUserQuestion when an older one lingers in scrollback", () => {
     // capturePane now includes scrollback (-S -200). A previously-dismissed
     // picker can sit above the live one. A top-down scan would lock onto the
