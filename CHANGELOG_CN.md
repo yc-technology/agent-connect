@@ -9,6 +9,38 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.9 — 2026-05-27
+
+### 🐛 修复 — 散文里出现 picker 字符触发幻象 AskUserQuestion picker
+
+线上反馈：在一个绑了 Telegram 的 topic 里讨论 bot 自己的 picker UI，
+Claude 的回复在 tmux pane 里出现了 `☐ Option 1` + `Enter to select ·
+↑/↓ navigate` 这些散文文字。两个 glyph-based AskUserQuestion pattern
+按字面匹配到了 → `extractInteractiveContent` 返回 hit →
+`statusPolling.tick` 在 Telegram 渲染了一个幻象 inline-button picker
+→ 同时（因为 `statusPolling.tick` 在 `isInteractiveUi` 为 true 时早
+return）spinner 状态更新停止 fire，TG 状态条卡在 "Thinking…"。
+
+两个 glyph-based Claude AskUserQuestion pattern 现在要求**匹配区域
+下方 4 行内必须有 long-dash chrome 分隔线**（U+2500 `─`，≥5 个连
+排）。真 Claude TUI 这里必有 chrome（picker 和 `❯` 输入行之间）。
+散文里的 picker 字符下面只有 pane 最底部的 input 区域 chrome，距离
+远，匹不到。
+
+范围：只动那两个 glyph-based Claude pattern。其他 UI pattern
+（Codex 独特的 `Question N/M` + `tab to add notes | enter to submit
+answer`、ExitPlanMode、BashApproval、Settings 等）匹配词足够独特，
+散文撞不上，不动。
+
+**承认是 band-aid**，源码里有注释标记。**proper fix** 排到 0.4.0：
+订阅 Claude 的 `Notification` hook，Claude 阻塞等用户输入时给该
+window 设个 "pending input" flag，**只在 flag 设置时才跑 picker 检测**。
+事件驱动后散文怎么写都不会触发幻象 picker——因为检测路径压根不跑。
+现在先发 heuristic 是因为症状用户可见，proper fix 是 0.4.0 级别的
+重构。
+
+---
+
 ## 0.3.8 — 2026-05-27
 
 五个 tmux window 生命周期 / picker 修复，加一个自升级命令。线上某个

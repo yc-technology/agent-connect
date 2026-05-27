@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.9 — 2026-05-27
+
+### 🐛 Fixed — phantom AskUserQuestion picker when prose mentions picker glyphs
+
+Reported in the wild: a Telegram-bound topic was used to discuss the
+bot's own picker UI. Claude's response in the tmux pane contained `☐
+Option 1` + `Enter to select · ↑/↓ navigate` as prose. The two
+glyph-based AskUserQuestion patterns matched on this text →
+`extractInteractiveContent` returned a hit → `statusPolling.tick`
+rendered a phantom inline-button picker in Telegram → and (since
+`statusPolling.tick` early-returns on `isInteractiveUi`) the spinner
+status updates stopped firing, so the status line appeared stuck on
+"Thinking…".
+
+Both glyph-based Claude AskUserQuestion patterns now require a
+long-dash chrome separator (`─` U+2500, ≥5 in a row) within 4 lines
+below the matched region. Real Claude TUI always has chrome there
+(between the picker and the `❯` input row). Prose discussing pickers
+has chrome only at the bottom-of-pane input area, far below — so it
+no longer hits.
+
+Scope: only the two glyph-based Claude patterns. Other UI patterns
+(Codex's distinctive `Question N/M` + `tab to add notes | enter to
+submit answer`, ExitPlanMode, BashApproval, Settings, etc.) keep
+their existing matchers because their top/bottom regexes are specific
+enough that no realistic prose hits them.
+
+Acknowledged band-aid; documented in the source comment. The proper
+fix (planned for 0.4.0) is to subscribe to Claude's `Notification`
+hook, set a per-window "pending input" flag when Claude blocks for
+user input, and only run picker detection when the flag is set. With
+event-driven detection, prose can't trigger phantom pickers at all
+because the detection path doesn't run unless Claude has actually
+asked. Shipping the heuristic now because the symptom is user-visible
+and the proper fix is a 0.4.0-sized refactor.
+
+---
+
 ## 0.3.8 — 2026-05-27
 
 Five lifecycle / picker fixes plus a new self-upgrade command.

@@ -373,6 +373,34 @@ describe("interactive UI extraction", () => {
     expect(result?.content).not.toContain("Plan Mode");
   });
 
+  it("does not phantom-match Claude prose discussing pickers (no chrome anchor)", () => {
+    // Reported in the wild: when a Telegram-bound topic was used to
+    // discuss the bot's own AskUserQuestion picker, Claude's response
+    // in the tmux pane contained `☐`, `←`, `Enter to select`, etc. as
+    // prose. The old extractInteractiveContent fired anyway because
+    // the top/bottom matchers don't care WHERE in the capture they
+    // hit — phantom picker rendered in TG every time we discussed the
+    // bot. requireChromeBelow on the two glyph-based AskUserQuestion
+    // variants filters this out: real Claude pickers have chrome
+    // below within 4 lines, prose doesn't.
+    const proseDiscussingPicker =
+      "› user: how does the picker work?\n" +
+      "\n" +
+      "⏺ When Claude asks a question, the TUI shows:\n" +
+      "  ☐ Option 1: Do X\n" +
+      "  ☐ Option 2: Do Y\n" +
+      "  Enter to select · ↑/↓ navigate\n" +
+      "\n" +
+      "  ← that's the cursor row, ↓ to go down.\n" +
+      "\n" +
+      "Hope that helps! Let me know if you have more questions.\n" +
+      "─────\n" +
+      "❯\n" +
+      "─────\n" +
+      "  ⏵⏵ bypass permissions on\n";
+    expect(extractInteractiveContent(proseDiscussingPicker)).toBeNull();
+  });
+
   it("locks onto the latest AskUserQuestion when an older one lingers in scrollback", () => {
     // capturePane now includes scrollback (-S -200). A previously-dismissed
     // picker can sit above the live one. A top-down scan would lock onto the
@@ -385,8 +413,8 @@ describe("interactive UI extraction", () => {
       "Old picker description\n" +
       "❯ 1. Old option A\n" +
       "  2. Old option B\n" +
-      "─────\n" +
       "Enter to select · ↑/↓ to navigate · Esc to cancel\n" +
+      "─────\n" +
       "\n" +
       "User declined to answer questions\n" +
       "⎿  · Old prompt was dismissed\n" +
@@ -398,8 +426,8 @@ describe("interactive UI extraction", () => {
       "New picker description\n" +
       "❯ 1. New option X\n" +
       "  2. New option Y\n" +
-      "─────\n" +
-      "Enter to select · ↑/↓ to navigate · Esc to cancel\n";
+      "Enter to select · ↑/↓ to navigate · Esc to cancel\n" +
+      "─────\n";
     const result = extractInteractiveContent(pane);
     expect(result?.name).toBe("AskUserQuestion");
     expect(result?.content).toContain("New question");

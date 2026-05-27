@@ -8,6 +8,11 @@ interface UIPattern {
   top: RegExp[];
   bottom: RegExp[];
   minGap: number;
+  // When true, the matched region must be followed (within 4 lines) by a
+  // long-dash chrome separator. See `tryExtract` for rationale. Default
+  // false; opt-in for patterns whose top/bottom matchers are common in
+  // prose (Claude's checkbox-style AskUserQuestion).
+  requireChromeBelow?: boolean;
 }
 
 const UI_PATTERNS: UIPattern[] = [
@@ -21,13 +26,15 @@ const UI_PATTERNS: UIPattern[] = [
     name: "AskUserQuestion",
     top: [/^\s*←\s+[☐✔☒]/u],
     bottom: [],
-    minGap: 1
+    minGap: 1,
+    requireChromeBelow: true
   },
   {
     name: "AskUserQuestion",
     top: [/^\s*[☐✔☒]/u],
     bottom: [/^\s*Enter to select/],
-    minGap: 1
+    minGap: 1,
+    requireChromeBelow: true
   },
   {
     name: "PermissionPrompt",
@@ -185,6 +192,46 @@ function tryExtract(lines: string[], pattern: UIPattern): InteractiveUIContent |
 
   if (bottomIdx === null || bottomIdx - topIdx < pattern.minGap) {
     return null;
+  }
+
+  // Chrome-anchor guard for prose-false-positive-prone patterns. The two
+  // Claude AskUserQuestion variants (just `☐` checkbox + "Enter to select"
+  // footer) match all over plain prose — including a Telegram conversation
+  // that happens to be discussing the bot's own picker UI. Without an
+  // anchor, every time we talk about pickers in a TG-bound topic, the
+  // tmux pane shows Claude's response containing `☐`/"Enter to select"/etc
+  // → extractInteractiveContent fires → phantom picker rendered in TG.
+  //
+  // Real Claude TUI pickers are framed by long-dash chrome (U+2500 ≥5) on
+  // BOTH sides. Prose containing the same glyphs has chrome only at the
+  // bottom of pane (the input-area chrome), far below. Requiring chrome
+  // within `CHROME_PROXIMITY` lines below bottomIdx catches the prose case
+  // without breaking real TUI capture.
+  //
+  // Opt-in per pattern because: Codex's distinctive `Question N/M` +
+  // `tab to add notes | enter to submit answer` patterns are specific
+  // enough that no realistic prose hits them; ditto Settings /
+  // ExitPlanMode / Bash approval / etc. Only the two glyph-based Claude
+  // variants need the extra anchor.
+  //
+  // BAND-AID. This is heuristic-on-heuristic — magic proximity number,
+  // assumes chrome layout never changes, hand-curated pattern flag list.
+  // The proper fix is event-driven: subscribe to Claude's `Notification`
+  // hook (fires when claude is blocked waiting for user input), set a
+  // per-window "pending input" flag, and only run extractInteractiveContent
+  // when the flag is set. Prose can't trigger phantom pickers if the
+  // detection path doesn't run at all. Scheduled for 0.4.0 — see
+  // CHANGELOG/0.3.9 entry for rationale on shipping the band-aid first.
+  if (pattern.requireChromeBelow) {
+    const CHROME_PROXIMITY = 4;
+    let chromeNearby = false;
+    for (let i = bottomIdx + 1; i < Math.min(lines.length, bottomIdx + 1 + CHROME_PROXIMITY); i += 1) {
+      if (LONG_DASH_RE.test(lines[i] ?? "")) {
+        chromeNearby = true;
+        break;
+      }
+    }
+    if (!chromeNearby) return null;
   }
 
   const content = lines.slice(topIdx, bottomIdx + 1).join("\n").trimEnd();
