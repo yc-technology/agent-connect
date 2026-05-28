@@ -9,6 +9,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.12 — 2026-05-29
+
+### 🐛 Fixed — silent 12h downtime after a slow callback's late ack threw
+
+Reported in the wild: a Resume Session callback ran tmux work
+(createWindow + 5–15s waitForSessionMapEntry + bindThread) BEFORE
+acking the Telegram callback query, so the eventual
+`answerCallbackQuery` landed past Telegram's ~10-minute expiry
+window. Telegram returned 400 ("query is too old"), the unhandled
+GrammyError killed the bot runtime's TG polling — but the Fastify
+HTTP server kept serving 200 on `/healthz`, so the supervisor never
+noticed. Twelve hours of Telegram silence before a human poked it.
+
+Four fixes:
+
+- `safeAnswerCallback(ctx, …)` helper wraps every `answerCallbackQuery`
+  call. Telegram 400s are now logged as a warn and swallowed.
+- `handleSessionSelectCallback` / `handleSessionNewCallback` /
+  `handleDirectoryConfirmCallback` now ack at function entry, BEFORE
+  any tmux / FS / wait-for-hook work. The "Created" / "Failed" toast
+  goes away, but the actual outcome was always conveyed via the
+  message edit (`✅ Created. Send messages here.`).
+- `MultiBotRuntimeManager` tracks crashed bots in a `crashedBots` set
+  (set on `bot.start` rejection; cleared on next successful start or
+  user `stopBot`). `/healthz` now returns 503 + a `reason` field when
+  the set is non-empty. The supervisor's existing
+  `defaultProbeHealth` sees the non-2xx and trips its restart logic.
+
+### 🐛 Fixed — Telegram status stuck on "Compacting… 0%" after compact finishes
+
+`statusPolling.tick` was only updating the Telegram status message
+when `parseStatusLine` returned a string. Returning null (claude is
+idle, no spinner present) was treated as "do nothing", which left
+the previous spinner text stuck in Telegram indefinitely. Most
+user-visible failure mode: after `/compact` completed, the
+"Compacting conversation… N%" text remained forever in TG.
+
+Now null also enqueues a status clear. The messageQueue dedupes by
+content so re-clearing an already-clear status is a no-op (no extra
+editMessageText calls in steady state).
+
+---
+
 ## 0.3.11 — 2026-05-28
 
 ### 🐛 Fixed — `/kill` missing from the Telegram command menu

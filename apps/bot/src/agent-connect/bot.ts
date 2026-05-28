@@ -66,7 +66,7 @@ import { parseStatusLine, parseUsageOutput } from "./terminalParser.js";
 import { createGrammyBot } from "./telegramClient.js";
 import { isForumThreadId, PRIVATE_CHAT_THREAD_ID } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
-import { agentConnectDir } from "./utils.js";
+import { agentConnectDir, errorMessage } from "./utils.js";
 
 // Directory picker starts at $HOME. Previously this used `process.cwd()`
 // which was unpredictable for daemon-mode npm users: if they ran
@@ -75,6 +75,42 @@ import { agentConnectDir } from "./utils.js";
 // stable, predictable starting point — users descend into their
 // project tree from a known anchor.
 const initialBrowsePath = (): string => homedir();
+
+/**
+ * Wrap `ctx.answerCallbackQuery` so a Telegram 400 (commonly "query is too
+ * old and response timeout expired or query ID is invalid") doesn't bubble
+ * up and kill the grammy runtime. Reported in the wild: a Resume Session
+ * callback took >10 minutes to ack because createAndBindWindow ran slow
+ * tmux + waitForSessionMapEntry ops BEFORE acking — the late ack threw,
+ * the throw was unhandled, and the bot's TG polling stopped. Twelve hours
+ * of silence followed.
+ *
+ * answerCallbackQuery is best-effort ("dismiss the loading spinner on the
+ * tapped button" + optional toast). It never carries load-bearing payload.
+ * Failing to ack just leaves the button spinner visible briefly. Fine.
+ *
+ * Pair this with acking EARLY (before any slow work) on callbacks that do
+ * heavy lifting — see handleSessionSelectCallback / handleSessionNewCallback.
+ */
+async function safeAnswerCallback(
+  ctx: Pick<Context, "answerCallbackQuery">,
+  arg?: string | { text?: string; show_alert?: boolean; url?: string; cache_time?: number }
+): Promise<void> {
+  try {
+    if (arg === undefined) {
+      await ctx.answerCallbackQuery();
+    } else if (typeof arg === "string") {
+      await ctx.answerCallbackQuery(arg);
+    } else {
+      await ctx.answerCallbackQuery(arg);
+    }
+  } catch (err) {
+    sharedLogger().warn(
+      { err: errorMessage(err) },
+      "answerCallbackQuery failed (best-effort, ignored)"
+    );
+  }
+}
 
 export const CC_COMMANDS: Record<string, string> = {
   clear: "↗ Clear conversation history",
@@ -293,14 +329,14 @@ export async function historyCallbackHandler(
   const data = ctx.callbackQuery?.data ?? "";
   const parsed = parseHistoryCallbackData(data);
   if (!parsed) {
-    await ctx.answerCallbackQuery("Invalid data");
+    await safeAnswerCallback(ctx, "Invalid data");
     return;
   }
 
   const window = await tmuxManager.findWindowById(parsed.windowId);
   if (!window) {
     await editTextWithFallback(ctx, "Window no longer exists.");
-    await ctx.answerCallbackQuery("Window no longer exists");
+    await safeAnswerCallback(ctx, "Window no longer exists");
     return;
   }
 
@@ -310,7 +346,7 @@ export async function historyCallbackHandler(
     endByte: parsed.endByte
   });
   await editTextWithFallback(ctx, page.text, page.keyboard ? { reply_markup: page.keyboard } : undefined);
-  await ctx.answerCallbackQuery("Page updated");
+  await safeAnswerCallback(ctx, "Page updated");
 }
 
 export async function statusCommand(
@@ -893,13 +929,13 @@ export async function pickerCallbackHandler(
   stateStore = defaultBotState
 ): Promise<void> {
   if (!isUserAllowed(ctx.from?.id, config)) {
-    await ctx.answerCallbackQuery("Not authorized");
+    await safeAnswerCallback(ctx, "Not authorized");
     return;
   }
 
   const data = ctx.callbackQuery?.data ?? "";
   if (data === "noop") {
-    await ctx.answerCallbackQuery();
+    await safeAnswerCallback(ctx);
     return;
   }
 
@@ -967,7 +1003,7 @@ export async function screenshotCallbackHandler(
   options: { refreshDelayMs?: number } = {}
 ): Promise<void> {
   if (!isUserAllowed(ctx.from?.id, config)) {
-    await ctx.answerCallbackQuery("Not authorized");
+    await safeAnswerCallback(ctx, "Not authorized");
     return;
   }
 
@@ -975,26 +1011,26 @@ export async function screenshotCallbackHandler(
   if (data.startsWith(CB_SCREENSHOT_REFRESH)) {
     const windowId = data.slice(CB_SCREENSHOT_REFRESH.length);
     const refreshed = await refreshScreenshotMessage(ctx, windowId, tmuxManager);
-    await ctx.answerCallbackQuery(refreshed ? "Refreshed" : { text: "Failed to refresh", show_alert: true });
+    await safeAnswerCallback(ctx, refreshed ? "Refreshed" : { text: "Failed to refresh", show_alert: true });
     return;
   }
 
   if (data.startsWith(CB_KEYS_PREFIX)) {
     const parsed = parseScreenshotKeyCallback(data);
     if (!parsed) {
-      await ctx.answerCallbackQuery("Invalid data");
+      await safeAnswerCallback(ctx, "Invalid data");
       return;
     }
 
     const keyInfo = SCREENSHOT_KEY_SEND_MAP[parsed.keyId];
     if (!keyInfo) {
-      await ctx.answerCallbackQuery("Unknown key");
+      await safeAnswerCallback(ctx, "Unknown key");
       return;
     }
 
     const window = await tmuxManager.findWindowById(parsed.windowId);
     if (!window) {
-      await ctx.answerCallbackQuery({ text: "Window not found", show_alert: true });
+      await safeAnswerCallback(ctx, { text: "Window not found", show_alert: true });
       return;
     }
 
@@ -1002,7 +1038,7 @@ export async function screenshotCallbackHandler(
       enter: keyInfo.enter,
       literal: keyInfo.literal
     });
-    await ctx.answerCallbackQuery(keyInfo.label);
+    await safeAnswerCallback(ctx, keyInfo.label);
     await sleep(options.refreshDelayMs ?? 500);
     await refreshScreenshotMessage(ctx, parsed.windowId, tmuxManager);
   }
@@ -1017,7 +1053,7 @@ export async function interactiveCallbackHandler(
   options: { refreshDelayMs?: number } = {}
 ): Promise<void> {
   if (!isUserAllowed(ctx.from?.id, config)) {
-    await ctx.answerCallbackQuery("Not authorized");
+    await safeAnswerCallback(ctx, "Not authorized");
     return;
   }
 
@@ -1028,20 +1064,20 @@ export async function interactiveCallbackHandler(
   if (data.startsWith(CB_ASK_REFRESH)) {
     const windowId = data.slice(CB_ASK_REFRESH.length);
     await handleInteractiveUi({ api, routing: sessionManager, tmuxManager }, userId, windowId, threadId);
-    await ctx.answerCallbackQuery("🔄");
+    await safeAnswerCallback(ctx, "🔄");
     return;
   }
 
   const action = INTERACTIVE_KEY_SEND_MAP.find((candidate) => data.startsWith(candidate.prefix));
   if (!action) {
-    await ctx.answerCallbackQuery("Invalid data");
+    await safeAnswerCallback(ctx, "Invalid data");
     return;
   }
 
   const windowId = data.slice(action.prefix.length);
   const window = await tmuxManager.findWindowById(windowId);
   if (!window) {
-    await ctx.answerCallbackQuery({ text: "Window not found", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Window not found", show_alert: true });
     return;
   }
 
@@ -1052,7 +1088,7 @@ export async function interactiveCallbackHandler(
     await sleep(options.refreshDelayMs ?? 500);
     await handleInteractiveUi({ api, routing: sessionManager, tmuxManager }, userId, windowId, threadId);
   }
-  await ctx.answerCallbackQuery(action.label);
+  await safeAnswerCallback(ctx, action.label);
 }
 
 export function formatUsageReply(paneText: string): string {
@@ -1284,7 +1320,7 @@ function validatePendingThread(
 ): Promise<boolean> {
   const pendingThreadId = getPendingThreadId(userData);
   if (pendingThreadId !== null && pendingThreadId !== threadId) {
-    return ctx.answerCallbackQuery({ text: "Stale picker (topic mismatch)", show_alert: true }).then(() => false);
+    return safeAnswerCallback(ctx, { text: "Stale picker (topic mismatch)", show_alert: true }).then(() => false);
   }
   return Promise.resolve(true);
 }
@@ -1304,18 +1340,18 @@ async function handleWindowBindCallback(
     ? (userData[UNBOUND_WINDOWS_KEY] as string[])
     : [];
   if (!Number.isInteger(index) || index < 0 || index >= cachedWindows.length) {
-    await ctx.answerCallbackQuery({ text: "Window list changed, please retry", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Window list changed, please retry", show_alert: true });
     return;
   }
 
   const selectedWindowId = cachedWindows[index]!;
   const window = await tmuxManager.findWindowById(selectedWindowId);
   if (!window) {
-    await ctx.answerCallbackQuery({ text: "Window no longer exists", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Window no longer exists", show_alert: true });
     return;
   }
   if (threadId === null) {
-    await ctx.answerCallbackQuery({ text: "Not in a topic", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Not in a topic", show_alert: true });
     return;
   }
 
@@ -1331,7 +1367,7 @@ async function handleWindowBindCallback(
 
   await sendPendingText(ctx, userData, selectedWindowId, sessionManager);
   delete userData[PENDING_THREAD_ID_KEY];
-  await ctx.answerCallbackQuery("Bound");
+  await safeAnswerCallback(ctx, "Bound");
 }
 
 async function handleWindowNewCallback(
@@ -1348,7 +1384,7 @@ async function handleWindowNewCallback(
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
   await editTextWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
 }
 
 async function handleDirectorySelectCallback(
@@ -1364,14 +1400,14 @@ async function handleDirectorySelectCallback(
     ? (userData[BROWSE_DIRS_KEY] as string[])
     : [];
   if (!Number.isInteger(index) || index < 0 || index >= cachedDirs.length) {
-    await ctx.answerCallbackQuery({ text: "Directory list changed, please refresh", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Directory list changed, please refresh", show_alert: true });
     return;
   }
 
   const currentPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
   const newPath = resolve(currentPath, cachedDirs[index]!);
   if (!isDirectory(newPath)) {
-    await ctx.answerCallbackQuery({ text: "Directory not found", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "Directory not found", show_alert: true });
     return;
   }
 
@@ -1380,7 +1416,7 @@ async function handleDirectorySelectCallback(
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
   await editTextWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
 }
 
 async function handleDirectoryUpCallback(
@@ -1397,7 +1433,7 @@ async function handleDirectoryUpCallback(
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
   await editTextWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
 }
 
 async function handleDirectoryPageCallback(
@@ -1410,7 +1446,7 @@ async function handleDirectoryPageCallback(
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
   const page = Number.parseInt(data.slice(CB_DIR_PAGE.length), 10);
   if (!Number.isInteger(page)) {
-    await ctx.answerCallbackQuery("Invalid data");
+    await safeAnswerCallback(ctx, "Invalid data");
     return;
   }
   const currentPath = stringValue(userData[BROWSE_PATH_KEY], initialBrowsePath());
@@ -1418,7 +1454,7 @@ async function handleDirectoryPageCallback(
   userData[BROWSE_PAGE_KEY] = browser.page;
   userData[BROWSE_DIRS_KEY] = browser.subdirs;
   await editTextWithFallback(ctx, browser.text, { reply_markup: browser.keyboard });
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
 }
 
 async function handleDirectoryConfirmCallback(
@@ -1439,6 +1475,10 @@ async function handleDirectoryConfirmCallback(
   >,
   tmuxManager: Pick<TmuxManager, "createWindow">
 ): Promise<void> {
+  // ACK FIRST — listSessionsForDirectory below can be slow (fs scan), and
+  // the fall-through to createAndBindWindow adds the usual tmux + 5-15s
+  // wait. See handleSessionSelectCallback for the full rationale.
+  await safeAnswerCallback(ctx);
   if (!(await validatePendingThread(ctx, userData, threadId))) {
     clearBrowseState(userData);
     deletePendingText(userData);
@@ -1459,7 +1499,6 @@ async function handleDirectoryConfirmCallback(
     const anchor = threadId !== null ? sessionManager.getRecoveryAnchor(userId, threadId) : null;
     const picker = buildSessionPicker(sessions, anchor ? { recommendedSessionId: anchor } : {});
     await editTextWithFallback(ctx, picker.text, { reply_markup: picker.keyboard });
-    await ctx.answerCallbackQuery();
     return;
   }
 
@@ -1484,13 +1523,20 @@ async function handleSessionSelectCallback(
   >,
   tmuxManager: Pick<TmuxManager, "createWindow">
 ): Promise<void> {
+  // ACK FIRST. createAndBindWindow below runs `tmux new-window` + a 5-15s
+  // waitForSessionMapEntry block + bindThread before returning — a late
+  // answerCallbackQuery can easily land past Telegram's ~10 minute
+  // callback expiry window, throwing a 400 that historically killed the
+  // grammy runtime for ~12 hours of silent downtime. Dismiss the button
+  // spinner immediately; the actual outcome is conveyed by the message
+  // edit ("✅ Created. Send messages here." / "❌ failure reason").
+  await safeAnswerCallback(ctx);
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
   const index = Number.parseInt(data.slice(CB_SESSION_SELECT.length), 10);
   const sessions = Array.isArray(userData[SESSIONS_KEY])
     ? (userData[SESSIONS_KEY] as ClaudeSession[])
     : [];
   if (!Number.isInteger(index) || index < 0 || index >= sessions.length) {
-    await ctx.answerCallbackQuery("Session not found");
     return;
   }
 
@@ -1528,6 +1574,8 @@ async function handleSessionNewCallback(
   >,
   tmuxManager: Pick<TmuxManager, "createWindow">
 ): Promise<void> {
+  // ACK FIRST — see handleSessionSelectCallback for the rationale.
+  await safeAnswerCallback(ctx);
   if (!(await validatePendingThread(ctx, userData, threadId))) return;
   const selectedPath = stringValue(userData[SELECTED_PATH_KEY], initialBrowsePath());
   clearSessionPickerState(userData);
@@ -1555,7 +1603,6 @@ async function createAndBindWindow(
   if (!success) {
     await editTextWithFallback(ctx, `❌ ${message}`);
     deletePendingText(userData);
-    await ctx.answerCallbackQuery("Failed");
     return;
   }
 
@@ -1577,7 +1624,10 @@ async function createAndBindWindow(
     await editTextWithFallback(ctx, `✅ ${message}`);
     deletePendingText(userData);
   }
-  await ctx.answerCallbackQuery("Created");
+  // Note: callbackQuery already acked at the entry of the callback handler
+  // (handleSessionSelectCallback / handleSessionNewCallback /
+  // handleDirectoryConfirmCallback) — see the rationale comment there.
+  // Outcome is conveyed via the editMessageText above.
 }
 
 async function sendPendingText(
@@ -1608,7 +1658,7 @@ async function cancelPicker(
   deletePendingText(userData);
   extra?.();
   await editTextWithFallback(ctx, "Cancelled");
-  await ctx.answerCallbackQuery("Cancelled");
+  await safeAnswerCallback(ctx, "Cancelled");
 }
 
 function deletePendingText(userData: Record<string, unknown>): void {

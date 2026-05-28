@@ -107,6 +107,10 @@ export interface BotRuntimeControl {
   startBot(record: BotConfigRecord): Promise<void>;
   restartBot(record: BotConfigRecord): Promise<void>;
   stopBot(id: string): Promise<void>;
+  // Returns true if any bot's grammy runtime crashed since its last
+  // successful start (i.e. TG polling is dead even though the HTTP server
+  // is still up). Surfaced via /healthz → supervisor restart.
+  hasCrashedBot(): boolean;
 }
 
 type RuntimeAction = "none" | "started" | "restarted" | "stopped";
@@ -155,12 +159,28 @@ export function createServer(config: Config, state: RuntimeState, deps: ServerDe
   // `msgPrefix?` vs `msgPrefix` (pino marks it optional).
   const server = Fastify({ loggerInstance: fastifyLogger }) as unknown as FastifyInstance;
 
-  server.get("/healthz", async () => ({
-    ok: true,
-    service: "agent-connect",
-    startedAt: state.startedAt,
-    activeBots: activeBotCount(state, deps.runtimeManager)
-  }));
+  server.get("/healthz", async (_req, reply) => {
+    // 503 when ANY bot's grammy runtime crashed since last start. The HTTP
+    // server staying up while TG polling is dead is the exact scenario the
+    // supervisor's healthz check needs to catch — pre-fix it would happily
+    // see 200 for 12+ hours while users got silence on Telegram.
+    const crashed = deps.runtimeManager?.hasCrashedBot() ?? false;
+    if (crashed) {
+      return reply.code(503).send({
+        ok: false,
+        service: "agent-connect",
+        startedAt: state.startedAt,
+        activeBots: activeBotCount(state, deps.runtimeManager),
+        reason: "bot runtime crashed (TG polling dead) — supervisor should restart"
+      });
+    }
+    return {
+      ok: true,
+      service: "agent-connect",
+      startedAt: state.startedAt,
+      activeBots: activeBotCount(state, deps.runtimeManager)
+    };
+  });
 
   server.get("/readyz", async (_request, reply) => {
     if (!state.botReady) {

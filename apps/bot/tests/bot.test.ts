@@ -1107,7 +1107,10 @@ describe("bot text and picker flow", () => {
     expect(bindThread).toHaveBeenCalledWith(12345, 42, "@8", "project");
     expect(sendToWindow).toHaveBeenCalledWith("@8", "start work");
     expect(editMessageText).toHaveBeenCalledWith(expect.stringContaining("Created window"), formattedOptions);
-    expect(answerCallbackQuery).toHaveBeenCalledWith("Created");
+    // Callback is now acked UP FRONT (no text) before the slow tmux work,
+    // not at the end with "Created" — see safeAnswerCallback's rationale.
+    // The "Created" outcome lands in the message edit above instead.
+    expect(answerCallbackQuery).toHaveBeenCalledWith();
   });
 
   it("resumes a selected existing session by spawning `claude --resume <id>` and binding the topic", async () => {

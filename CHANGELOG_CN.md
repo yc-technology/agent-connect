@@ -9,6 +9,46 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.12 — 2026-05-29
+
+### 🐛 修复 — 慢 callback ack 抛错炸 bot runtime，导致 12 小时静默 downtime
+
+线上反馈：用户点 Resume Session 按钮，回调里跑了一长串 tmux 活
+（createWindow + 5-15s waitForSessionMapEntry + bindThread），全部
+跑完才去 ack callback query。这时已经过了 Telegram 的 ~10 分钟
+callback 有效期，`answerCallbackQuery` 返回 400 ("query is too old")，
+没人 catch 的 GrammyError 把 grammy bot 的 TG polling 杀了——但
+Fastify HTTP server 还活着，`/healthz` 一直 200，supervisor 完全没
+察觉。12 小时静默直到有人手动查。
+
+四个修：
+
+- 新增 `safeAnswerCallback(ctx, …)` 辅助函数，包住所有
+  `answerCallbackQuery` 调用。Telegram 400 现在记 warn 然后吞掉，不
+  炸 runtime。ack 本来就是 best-effort（只是关掉按钮上的 loading
+  转圈），不该承载关键信息。
+- `handleSessionSelectCallback` / `handleSessionNewCallback` /
+  `handleDirectoryConfirmCallback` 改成**进函数立刻 ack**，再做慢
+  活。原来末尾的 "Created" / "Failed" 提示去掉了，因为消息编辑
+  （`✅ Created. Send messages here.`）本来就传递结果。
+- `MultiBotRuntimeManager` 新增 `crashedBots` set，`bot.start`
+  reject 时加进去，下次成功 start 或用户 stopBot 时清掉。
+  `/healthz` 在 set 非空时返回 503 + `reason` 字段。supervisor 现有
+  的 `defaultProbeHealth` 看到非 2xx 就触发它的重启逻辑——TG 死了
+  不再隐形。
+
+### 🐛 修复 — Telegram 状态卡在 "Compacting… 0%" 不动
+
+`statusPolling.tick` 之前只在 `parseStatusLine` 返回字符串时才更新
+TG 状态消息。返回 null（claude 闲置、无 spinner）当作"啥都不做"，
+所以之前的 spinner 文字会永远卡在 TG。最容易看到的场景：`/compact`
+跑完之后 "Compacting conversation… N%" 永远停在那里。
+
+现在 null 也会 enqueue 一个状态清除。messageQueue 按内容去重，
+稳态下清除已经清除的状态是 no-op（不会多发 editMessageText）。
+
+---
+
 ## 0.3.11 — 2026-05-28
 
 ### 🐛 修复 — `/kill` 不出现在 Telegram 命令菜单里

@@ -86,15 +86,25 @@ export async function updateStatusMessage(
   if (options.skipStatus) return;
 
   const statusLine = parseStatusLine(paneText);
-  if (statusLine) {
-    deps.messageQueue.enqueueStatusUpdate(
-      userId,
-      windowId,
-      isCompletedStatusLine(statusLine) ? null : statusLine,
-      threadId
-    );
-    await deps.messageQueue.drain(userId);
-  }
+  // parseStatusLine returns null in two cases that both mean "Claude is no
+  // longer actively working in this pane":
+  //   1. Pane has no chrome (claude TUI not running yet, or window died)
+  //   2. Chrome present but no spinner / no progress bar above it —
+  //      Claude is idle waiting for input.
+  // Either way, any spinner status we previously showed in Telegram is
+  // stale. The notable user-facing failure mode this fixes is `/compact`:
+  // while compacting we forward "Compacting conversation… 47%", and when
+  // it finishes Claude shows the result + idles. Without the null branch,
+  // the last %-text sticks in Telegram forever. The messageQueue dedupes
+  // status updates by content, so re-enqueueing null when nothing is
+  // displayed is effectively a no-op (no extra editMessageText calls).
+  deps.messageQueue.enqueueStatusUpdate(
+    userId,
+    windowId,
+    statusLine === null || isCompletedStatusLine(statusLine) ? null : statusLine,
+    threadId
+  );
+  await deps.messageQueue.drain(userId);
 }
 
 export class StatusPoller {

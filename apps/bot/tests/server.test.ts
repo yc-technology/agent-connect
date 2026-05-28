@@ -146,6 +146,7 @@ describe("Fastify server", () => {
         calls.push(`restart:${record.id}`);
         active = 1;
       },
+      hasCrashedBot: () => false,
       stopBot: async (id) => {
         calls.push(`stop:${id}`);
         active = 0;
@@ -247,6 +248,7 @@ describe("Fastify server", () => {
         calls.push(`restart:${record.name}`);
         if (record.name === "Broken Bot") throw new Error("runtime failed");
       },
+      hasCrashedBot: () => false,
       stopBot: async (id) => {
         calls.push(`stop:${id}`);
       }
@@ -318,6 +320,7 @@ describe("Fastify server", () => {
       }),
       startBot: async () => {},
       restartBot: async () => {},
+      hasCrashedBot: () => false,
       stopBot: async () => {}
     };
     const server = createServer(

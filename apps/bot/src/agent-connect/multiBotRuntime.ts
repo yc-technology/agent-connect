@@ -47,6 +47,23 @@ export const hookRouterRegistry = new Map<string, HookRouter>();
 export class MultiBotRuntimeManager {
   private readonly instances = new Map<string, BotRuntimeInstance>();
   private readonly statuses = new Map<string, BotRuntimeStatus>();
+  /**
+   * Bot ids whose grammy runtime crashed since their last successful start
+   * (i.e. `bot.start(...)` rejected after we had already considered the
+   * instance up). Cleared on the next successful `startBot`. Surfaced to
+   * `/healthz` via {@link hasCrashedBot} so the supervisor can detect a
+   * dead TG polling loop even when the HTTP/Fastify server is still up.
+   *
+   * The on-disk Telegram bug we're guarding against:
+   *   - Resume Session callback → createAndBindWindow runs slow tmux work
+   *   - Late `answerCallbackQuery` throws 400 ("query is too old")
+   *   - Unhandled error in grammy → `bot.start` promise rejects
+   *   - HTTP server keeps serving healthz=200, but TG polling is dead
+   *   - Pre-fix: ~12h of silence before anyone noticed.
+   * Now: crash → `hasCrashedBot()` = true → healthz 503 →
+   *      supervisor's `defaultProbeHealth` sees non-2xx → restart.
+   */
+  private readonly crashedBots = new Set<string>();
 
   constructor(
     private readonly baseConfig: Config,
@@ -56,6 +73,10 @@ export class MultiBotRuntimeManager {
 
   activeCount(): number {
     return this.instances.size;
+  }
+
+  hasCrashedBot(): boolean {
+    return this.crashedBots.size > 0;
   }
 
   activeBots(): Array<{ id: string; name: string; tmuxSessionName: string }> {
@@ -205,6 +226,9 @@ export class MultiBotRuntimeManager {
         bashCapture
       };
       this.instances.set(record.id, instance);
+      // Successful start clears any previous crash flag — supervisor should
+      // see the bot as healthy again once we're polling.
+      this.crashedBots.delete(record.id);
       this.setStatus(record.id, {
         running: true,
         startedAt: new Date().toISOString(),
@@ -214,12 +238,23 @@ export class MultiBotRuntimeManager {
 
       void bot.start({ allowed_updates: ["message", "callback_query"] }).catch((error: unknown) => {
         logger().error({ botId: record.id, err: error }, "bot runtime stopped with error");
+        // Mark crashed BEFORE the cleanup so /healthz returns 503 and the
+        // supervisor's healthz probe trips a restart instead of staying
+        // green forever while TG polling is silently dead. We can't
+        // delegate cleanup to `stopBot` here because stopBot intentionally
+        // clears the crash flag (so user-initiated stops don't keep the
+        // service unhealthy). Inline the teardown so the flag persists.
+        this.crashedBots.add(record.id);
         this.setStatus(record.id, {
           running: false,
           stoppedAt: new Date().toISOString(),
           lastError: errorMessage(error)
         });
-        void this.stopBot(record.id);
+        const dead = this.instances.get(record.id);
+        if (dead) {
+          this.instances.delete(record.id);
+          void this.stopInstance(dead);
+        }
       });
     } catch (error) {
       this.setStatus(record.id, {
@@ -242,6 +277,10 @@ export class MultiBotRuntimeManager {
     const instance = this.instances.get(id);
     if (!instance) return;
     this.instances.delete(id);
+    // Stopping (whether triggered by a user or as cleanup from a crash
+    // handler) ends the crashed state — supervisor's next healthz probe
+    // shouldn't continue tripping a restart for a bot that's already gone.
+    this.crashedBots.delete(id);
     await this.stopInstance(instance);
     this.setStatus(id, {
       running: false,
