@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.11 — 2026-05-28
+
+### 🐛 Fixed — `/kill` missing from the Telegram command menu
+
+The command was registered and worked when typed manually, but the
+`BOT_COMMANDS` list (pushed to Telegram via `setMyCommands` to populate
+the `/` autocomplete menu) didn't include it — leftover from 0.3.8
+when `/unbind` was removed but the replacement entry was never added.
+Now `/kill` shows up alongside `/start`, `/history`, `/esc`, etc.
+
+Telegram clients cache the menu per chat for a few minutes — restart
+your Telegram app or wait briefly if `/kill` doesn't appear right
+after the bot restarts.
+
+---
+
 ## 0.3.10 — 2026-05-28
 
 ### ✨ Added — SessionSurvey forwarded to Telegram as a 3-button picker

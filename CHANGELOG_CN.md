@@ -9,6 +9,20 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.11 — 2026-05-28
+
+### 🐛 修复 — `/kill` 不出现在 Telegram 命令菜单里
+
+命令本身一直注册着、手动打 `/kill` 一直能用，但 `BOT_COMMANDS` 列
+表（通过 `setMyCommands` 推给 Telegram 让它填进 `/` autocomplete
+菜单的那个）里没有 `/kill`——0.3.8 移除 `/unbind` 的时候忘了把替
+代项加上。现在它跟 `/start`、`/history`、`/esc` 一样出现在菜单里。
+
+Telegram 客户端按 chat 缓存菜单几分钟——bot 重启后如果还没看到
+`/kill`，重开一下 Telegram app 或者稍等。
+
+---
+
 ## 0.3.10 — 2026-05-28
 
 ### ✨ 新增 — Claude 数据授权弹窗 forward 到 Telegram 三键 picker

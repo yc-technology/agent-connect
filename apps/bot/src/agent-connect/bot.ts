@@ -97,6 +97,7 @@ export const BOT_COMMANDS = [
   { command: "history", description: "Message history for this topic" },
   { command: "screenshot", description: "Terminal screenshot with control keys" },
   { command: "esc", description: "Send Escape to interrupt Claude" },
+  { command: "kill", description: "Kill window and unbind topic (tries to delete topic)" },
   { command: "usage", description: "Show Claude Code usage remaining" },
   ...Object.entries(CC_COMMANDS).map(([command, description]) => ({ command, description }))
 ];
