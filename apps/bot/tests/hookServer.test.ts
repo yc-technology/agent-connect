@@ -49,10 +49,17 @@ describe("Fastify /hook/events", () => {
         { window_id: "@7" }
       )
     });
-    // onSessionStart now awaits an fs.stat (for the universal EOF-skip
-    // offset seeding) before calling registerSession, so we need a couple
-    // more microtask cycles than the previous register-then-return path.
-    for (let i = 0; i < 5; i += 1) await new Promise((r) => setImmediate(r));
+    // The endpoint returns 202 immediately and processes the envelope
+    // asynchronously (onSessionStart awaits an fs.stat for the EOF-skip
+    // offset before registerSession). Poll for the registry row instead of
+    // waiting a FIXED number of microtask cycles — a fixed wait is the
+    // "setTimeout and hope" anti-pattern that passes on fast dev machines
+    // but races on slow CI (the actual failure: `expected undefined to be
+    // 'S'`). Per CLAUDE.md's testing guidance, loop until the state appears.
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && registry.getSessionByWindow("@7") === null) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(registry.getSessionByWindow("@7")?.session_id).toBe("S");
   });
 

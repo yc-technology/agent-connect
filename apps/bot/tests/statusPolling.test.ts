@@ -156,8 +156,16 @@ describe("status polling", () => {
 
     // tick 2: tmux up → down→up edge → notify
     await poller.tick();
-    // Allow the floating notify promise to flush.
-    await new Promise((r) => setImmediate(r));
+    // The notify is a floating promise; poll until it flushes instead of
+    // waiting a single setImmediate (which races on slow CI — the
+    // "setTimeout and hope" anti-pattern per CLAUDE.md).
+    const deadline = Date.now() + 3000;
+    while (
+      Date.now() < deadline &&
+      (testDeps.api.sendMessage as ReturnType<typeof vi.fn>).mock.calls.length === 0
+    ) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
     expect(testDeps.api.sendMessage).toHaveBeenCalledWith(
       100,
       expect.stringMatching(/tmux server was restarted/),
