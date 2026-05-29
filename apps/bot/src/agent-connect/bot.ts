@@ -1168,6 +1168,33 @@ export function registerBotHandlers(
     textMessageHandler(ctx, config, sessionManager, tmuxManager, options.stateStore ?? defaultBotState, handlerOptions)
   );
   bot.on("message", (ctx) => unsupportedContentHandler(ctx, config));
+
+  // Global error boundary. THE load-bearing resilience fix — without an
+  // installed `bot.catch`, grammy rethrows any error a handler throws out
+  // of the update loop, and in long-polling mode that rejects `bot.start`
+  // and kills Telegram polling entirely (the silent-12h-downtime incident).
+  // safeAnswerCallback patched the one path we'd observed, but ANY handler
+  // throwing — editMessageText on a deleted message, a sendMessage 403, a
+  // logic bug — would reproduce the same outage. With bot.catch installed,
+  // grammy routes per-update errors here and CONTINUES polling. We log with
+  // the update id + the offending update type for forensics, then swallow.
+  bot.catch((err) => {
+    const update = err.ctx?.update;
+    const updateId = update?.update_id;
+    // Identify which update kind blew up without dumping the whole payload
+    // (which can contain message text / tokens).
+    const updateKind = update
+      ? Object.keys(update).find((k) => k !== "update_id") ?? "unknown"
+      : "unknown";
+    sharedLogger().error(
+      {
+        err: errorMessage(err.error),
+        updateId,
+        updateKind
+      },
+      "bot.catch: handler threw; swallowed to keep polling alive"
+    );
+  });
 }
 
 export function createTelegramBot(

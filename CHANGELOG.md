@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.13 — 2026-05-29
+
+Follow-up to 0.3.12 — close the actual root cause and a churn
+regression found on careful review.
+
+### 🐛 Fixed — install a global `bot.catch` (the real resilience fix)
+
+0.3.12's `safeAnswerCallback` only patched the one path we'd seen
+crash (`answerCallbackQuery` 400). But grammy rethrows ANY unhandled
+error a handler throws out of the update loop, and in long-polling
+mode that rejects `bot.start` and kills Telegram polling. A throwing
+`editMessageText` (e.g. "message to edit not found"), a `sendMessage`
+403, or any handler bug would reproduce the exact same silent-downtime
+outage 0.3.12 was meant to prevent.
+
+`registerBotHandlers` now installs `bot.catch`. grammy routes
+per-update errors there and CONTINUES polling. We log the update id +
+update kind (not the full payload — it can contain message text) and
+swallow. This is the load-bearing backstop; `safeAnswerCallback` and
+the crashed-bot healthz from 0.3.12 remain as defense in depth for the
+ack-spinner UX and for polling-loop-level death respectively.
+
+### 🐛 Fixed — idle status-poll churn from 0.3.12's clear-on-null
+
+0.3.12 made `statusPolling.tick` call `enqueueStatusUpdate(null)` every
+tick for idle windows (to clear stale "Compacting… N%"). The clear
+branch had no dedup, so every idle topic enqueued a status_clear task
+and spun the drain loop every ~2s forever. No Telegram API calls
+resulted (clearStatusMessage has its own `!info` guard), but it was
+needless per-tick queue churn. `enqueueStatusUpdate` now skips the
+enqueue entirely when no status message is present — idle ticks are
+free again.
+
+---
+
 ## 0.3.12 — 2026-05-29
 
 ### 🐛 Fixed — silent 12h downtime after a slow callback's late ack threw

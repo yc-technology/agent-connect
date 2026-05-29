@@ -9,6 +9,36 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.13 — 2026-05-29
+
+0.3.12 的后续——认真复查后补上真正的根因和一个 churn 回归。
+
+### 🐛 修复 — 装全局 `bot.catch`（真正的根因修复）
+
+0.3.12 的 `safeAnswerCallback` 只补了我们观察到崩溃的那一条路径
+（`answerCallbackQuery` 400）。但 grammy 会把 handler 抛出的**任何**
+未捕获错误重新抛出 update 循环,long-polling 模式下这会 reject
+`bot.start` 杀掉 TG polling。一个抛错的 `editMessageText`（比如
+"message to edit not found"）、`sendMessage` 403、或任何 handler bug
+都会复现 0.3.12 本想防住的同一个静默 downtime。
+
+`registerBotHandlers` 现在装 `bot.catch`。grammy 把 per-update 错误
+路由到这里、**继续 polling**。我们记 update id + update 类型（不记
+完整 payload——可能含消息文本）然后吞掉。这是 load-bearing 的兜底;
+0.3.12 的 `safeAnswerCallback` 和 crashed-bot healthz 作为防御纵深
+保留（分别管 ack 转圈 UX 和 polling 循环级别的死亡）。
+
+### 🐛 修复 — 0.3.12 的 clear-on-null 导致 idle status 空转
+
+0.3.12 让 `statusPolling.tick` 对 idle window 每个 tick 都调
+`enqueueStatusUpdate(null)`（清掉过期的 "Compacting… N%"）。但 clear
+分支没 dedup,所以每个 idle topic 每 ~2 秒都 enqueue 一个 status_clear
++ 空转 drain 循环。不打 Telegram API（clearStatusMessage 自己有
+`!info` guard），但是无谓的 per-tick 队列空转。`enqueueStatusUpdate`
+现在在没有 status 消息时完全跳过 enqueue——idle tick 重新归零开销。
+
+---
+
 ## 0.3.12 — 2026-05-29
 
 ### 🐛 修复 — 慢 callback ack 抛错炸 bot runtime，导致 12 小时静默 downtime

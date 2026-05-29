@@ -15,6 +15,7 @@ import {
   killCommand,
   pickerCallbackHandler,
   photoMessageHandler,
+  registerBotHandlers,
   screenshotCallbackHandler,
   screenshotCommand,
   startCommand,
@@ -37,6 +38,50 @@ const config = {
 };
 
 const formattedOptions = expect.objectContaining({ entities: expect.any(Array) });
+
+describe("registerBotHandlers error boundary", () => {
+  it("installs a bot.catch that logs and swallows handler errors (keeps polling alive)", () => {
+    // Regression guard for the silent-12h-downtime incident: without an
+    // installed bot.catch, grammy rethrows a handler error out of the
+    // update loop and kills long-polling. We verify (a) a catch handler
+    // is registered, and (b) invoking it with a thrown error does NOT
+    // rethrow — it logs and returns.
+    const log = installCaptureLogger();
+    let caughtHandler: ((err: unknown) => unknown) | null = null;
+    const fakeBot = {
+      command: vi.fn(),
+      callbackQuery: vi.fn(),
+      on: vi.fn(),
+      catch: vi.fn((fn: (err: unknown) => unknown) => {
+        caughtHandler = fn;
+      })
+    };
+    const noopBashCapture = { cancel: vi.fn(), start: vi.fn(), cancelAll: vi.fn() };
+
+    registerBotHandlers(
+      fakeBot as never,
+      config as never,
+      {} as never,
+      {} as never,
+      { api: {} as never, bashCapture: noopBashCapture as never }
+    );
+
+    expect(fakeBot.catch).toHaveBeenCalledTimes(1);
+    expect(caughtHandler).toBeTypeOf("function");
+
+    // Simulate grammy handing us a BotError. Must NOT throw.
+    const botError = {
+      error: new Error("editMessageText failed (400: message to edit not found)"),
+      ctx: { update: { update_id: 555, callback_query: { id: "x" } } }
+    };
+    expect(() => caughtHandler!(botError)).not.toThrow();
+
+    const errs = log.at("error").filter((r) => r.msg?.includes("bot.catch"));
+    expect(errs).toHaveLength(1);
+    expect(errs[0]?.updateId).toBe(555);
+    expect(errs[0]?.updateKind).toBe("callback_query");
+  });
+});
 
 describe("bot helpers", () => {
   it("checks authorization", () => {

@@ -161,6 +161,15 @@ export class MessageQueueManager {
       return;
     }
 
+    // Dedup the clear path too. statusPolling.tick now calls this with
+    // null on EVERY poll tick for an idle window (no spinner present), so
+    // without this guard each idle topic would enqueue a status_clear +
+    // spin the drain loop every ~2s forever. clearStatusMessage is already
+    // a no-op when there's nothing to clear (its own `!info` guard), so
+    // skipping the enqueue entirely when no status message exists keeps
+    // idle ticks truly free instead of churning the queue machinery.
+    const info = this.statusMessageInfo.get(statusKey(userId, tid));
+    if (!info) return;
     this.enqueue(userId, {
       taskType: "status_clear",
       parts: [],

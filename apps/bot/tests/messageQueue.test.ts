@@ -108,6 +108,30 @@ describe("message queue status handling", () => {
     expect(manager.getStatusMessageInfo(100, 42)).toBeNull();
   });
 
+  it("does not enqueue or call deleteMessage when clearing an already-clear status", async () => {
+    // statusPolling.tick now calls enqueueStatusUpdate(null) on EVERY poll
+    // tick for an idle window (no spinner). With no status message present,
+    // this must be a complete no-op — no enqueue, no deleteMessage churn,
+    // every ~2s, per idle topic, forever.
+    fake = fakeApi();
+    const manager = queue();
+
+    manager.enqueueStatusUpdate(100, "@1", null, 42);
+    await manager.drain(100);
+    expect(fake.deletes).toEqual([]);
+
+    // A spinner appears, then clears once — that single transition should
+    // delete exactly one message, and subsequent idle clears stay no-ops.
+    manager.enqueueStatusUpdate(100, "@1", "Thinking...", 42);
+    await manager.drain(100);
+    manager.enqueueStatusUpdate(100, "@1", null, 42);
+    await manager.drain(100);
+    manager.enqueueStatusUpdate(100, "@1", null, 42);
+    manager.enqueueStatusUpdate(100, "@1", null, 42);
+    await manager.drain(100);
+    expect(fake.deletes).toEqual([1]); // exactly one delete, not three
+  });
+
   it("throttles consecutive status edits and resumes after cooldown", async () => {
     // Pin throttle to 1500ms so timing assertions don't drift with the
     // production default (3000ms).
