@@ -144,6 +144,31 @@ describe("interactive UI", () => {
     expect(fake.edits[0]).toContain("next question");
   });
 
+  it("re-edits when the window changes even if picker text is identical (keyboard routes to new window)", async () => {
+    // The inline keyboard's callback_data embeds the windowId. If a topic
+    // rebinds to a different window showing byte-identical picker text, the
+    // content-only dedup would skip the edit and leave buttons routing
+    // keypresses to the OLD (dead) window. Window must be part of the guard.
+    let windowId = "@5";
+    const deps = {
+      api: fake,
+      routing,
+      tmuxManager: {
+        findWindowById: vi.fn(async (id: string) => ({ windowId: id, windowName: "p", cwd: "/tmp", paneCurrentCommand: "" })),
+        capturePane: vi.fn(async () => settingsPane) // identical text both times
+      }
+    };
+
+    await handleInteractiveUi(deps, 100, windowId, 42);
+    expect(fake.messages).toHaveLength(1);
+    expect(fake.edits).toHaveLength(0);
+
+    windowId = "@9"; // topic rebound to a new window, same picker text
+    await handleInteractiveUi(deps, 100, windowId, 42);
+    // Must re-edit (not dedup-skip) so the keyboard's callback_data points at @9.
+    expect(fake.edits).toHaveLength(1);
+  });
+
   it("clears and deletes the tracked interactive message", async () => {
     await handleInteractiveUi(
       {

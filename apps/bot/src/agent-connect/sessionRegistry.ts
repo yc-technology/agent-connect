@@ -254,7 +254,20 @@ export class SessionRegistry {
     const startedAt = args.startedAt ?? Date.now();
     const lastByteOffset = args.lastByteOffset ?? 0;
     const tx = this.db.transaction((a: RegisterSessionArgs) => {
-      this.db.prepare("DELETE FROM sessions WHERE window_id = ?").run(a.windowId);
+      // Delete by BOTH keys before inserting. `session_id` is the PRIMARY
+      // KEY, so deleting only by `window_id` leaves a PK violation when the
+      // same session_id is still registered against a DIFFERENT window —
+      // e.g. `claude --resume <id>` spawns a new tmux window but reports the
+      // same session_id, or a transient window-id reshuffle. The INSERT then
+      // throws "UNIQUE constraint failed: sessions.session_id", which rejects
+      // the whole SessionStart transaction: the new session row is never
+      // written, drains for that window find no session, and the topic goes
+      // silent. Deleting the session_id's old row too keeps registration
+      // idempotent while preserving the single-live-session-per-window
+      // invariant (the window_id delete still enforces that).
+      this.db
+        .prepare("DELETE FROM sessions WHERE window_id = ? OR session_id = ?")
+        .run(a.windowId, a.sessionId);
       this.db
         .prepare(
           `INSERT INTO sessions

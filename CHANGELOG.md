@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.17 — 2026-05-29
+
+Three correctness fixes from a full bug-hunt review.
+
+### 🐛 Fixed — `registerSession` threw `UNIQUE constraint failed: sessions.session_id` (HIGH)
+
+`registerSession` deleted the prior row by `window_id` only, but
+`session_id` is the table PRIMARY KEY. When `claude --resume <id>`
+spawned a NEW tmux window reporting the SAME session_id (or a window-id
+reshuffle re-reported a live id), the INSERT violated the session_id PK
+and threw out of the whole SessionStart transaction — the new session
+row was never written, drains found no session, and the topic went
+silent. (This exact error appeared in production logs.) The delete now
+matches `window_id OR session_id`, keeping registration idempotent while
+preserving the single-live-session-per-window invariant.
+
+### 🐛 Fixed — interactive-picker dedup is now window-aware (MEDIUM)
+
+The per-(user,thread) dedup that skips redundant `editMessageText` calls
+compared only the picker text. The inline keyboard's `callback_data`
+embeds the windowId, so if a topic rebound to a different window showing
+byte-identical picker text, the edit was skipped and the buttons kept
+routing keypresses to the OLD (dead) window. The guard now compares the
+windowId too.
+
+### 🐛 Fixed — `topicProbeWarnings` map no longer leaks dead keys (LOW)
+
+Per-(userId, threadId, windowId) entries accumulated for the daemon's
+lifetime; they're now dropped at the two binding-cleanup edges.
+
+---
+
 ## 0.3.16 — 2026-05-29
 
 ### 🐛 Fixed — 409 Conflict no longer triggers an endless restart loop

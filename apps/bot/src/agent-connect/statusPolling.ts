@@ -201,6 +201,9 @@ export class StatusPoller {
         // (the user can re-attach to the same Claude/Codex session). Hard
         // delete is reserved for "Telegram topic was deleted" via probeTopics.
         await softCleanupTopicBinding(this.deps, userId, threadId, windowId);
+        // Binding is gone — drop its probe-warning throttle entry so the
+        // map doesn't accumulate dead keys over a long-lived daemon.
+        this.topicProbeWarnings.delete(`${userId}:${threadId}:${windowId}`);
         continue;
       }
 
@@ -291,6 +294,7 @@ export class StatusPoller {
       } catch (error) {
         if (isTopicInvalidError(error)) {
           await cleanupTopicBinding(this.deps, userId, threadId, windowId, true);
+          this.topicProbeWarnings.delete(`${userId}:${threadId}:${windowId}`);
         } else if (isBenignTopicProbeError(error)) {
           continue;
         } else {

@@ -50,7 +50,7 @@ const interactiveModes = new Map<InteractiveKey, string>();
 // (~2s) forever, each returning a 400 "not modified". With it, idle
 // pickers cost nothing and only genuine content changes (e.g. Claude
 // advancing from one AskUserQuestion straight to the next) hit the API.
-const interactiveContents = new Map<InteractiveKey, string>();
+const interactiveContents = new Map<InteractiveKey, { windowId: string; content: string }>();
 
 export interface InteractiveUiDeps {
   api: TelegramApiLike;
@@ -168,24 +168,30 @@ export async function handleInteractiveUi(
   const existingMessageId = interactiveMessages.get(key);
   if (existingMessageId && deps.api.editMessageText) {
     // Content dedup: if the same picker text is already displayed in this
-    // message, skip the edit entirely. statusPolling re-runs us every tick
-    // while a picker is up (so consecutive AskUserQuestions refresh), and
-    // without this guard a static picker would editMessageText every ~2s.
-    if (interactiveContents.get(key) === content.content) {
+    // message FOR THE SAME WINDOW, skip the edit entirely. statusPolling
+    // re-runs us every tick while a picker is up (so consecutive
+    // AskUserQuestions refresh), and without this guard a static picker
+    // would editMessageText every ~2s. The windowId is part of the guard
+    // because the inline keyboard's callback_data embeds it: if the topic
+    // rebound to a different window that happens to show byte-identical
+    // picker text, skipping the edit would leave buttons routing keypresses
+    // to the OLD window. Re-edit when the window changed even if text matches.
+    const shown = interactiveContents.get(key);
+    if (shown && shown.windowId === windowId && shown.content === content.content) {
       interactiveModes.set(key, windowId);
       return true;
     }
     try {
       await deps.api.editMessageText(chatId, existingMessageId, content.content, options);
       interactiveModes.set(key, windowId);
-      interactiveContents.set(key, content.content);
+      interactiveContents.set(key, { windowId, content: content.content });
       return true;
     } catch (error) {
       if (isMessageNotModified(error)) {
         // Telegram confirms the content is already what we wanted — record
         // it so the dedup above short-circuits subsequent ticks.
         interactiveModes.set(key, windowId);
-        interactiveContents.set(key, content.content);
+        interactiveContents.set(key, { windowId, content: content.content });
         return true;
       }
       const editErr = errorMessage(error);
@@ -226,7 +232,7 @@ export async function handleInteractiveUi(
     }
     interactiveMessages.set(key, sent.message_id);
     interactiveModes.set(key, windowId);
-    interactiveContents.set(key, content.content);
+    interactiveContents.set(key, { windowId, content: content.content });
     // Reset throttle state for this window so the next failure (if any) logs
     // immediately rather than being suppressed by a stale previous-error key.
     for (const k of interactiveLogLastAt.keys()) {

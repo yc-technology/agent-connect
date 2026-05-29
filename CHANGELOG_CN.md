@@ -9,6 +9,34 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.17 — 2026-05-29
+
+整体 bug 审查找出的三个正确性修复。
+
+### 🐛 修复 — `registerSession` 抛 `UNIQUE constraint failed: sessions.session_id`(HIGH)
+
+`registerSession` 只按 `window_id` 删旧行,但 `session_id` 是表主键。
+当 `claude --resume <id>` 在**新** tmux 窗口报**同一** session_id(或
+窗口 id 重排重报了一个还活着的 id)时,INSERT 撞主键、抛出整个
+SessionStart 事务——新 session 行没写、drain 找不到 session、该 topic
+静默。(这条错误真实出现在生产日志里。)删除改为匹配
+`window_id OR session_id`,保持注册幂等的同时保留"每窗口单活跃
+session"不变量。
+
+### 🐛 修复 — interactive picker 去重现在区分 window(MEDIUM)
+
+跳过冗余 `editMessageText` 的 per-(user,thread) 去重之前只比 picker
+文本。inline keyboard 的 `callback_data` 内嵌 windowId,所以若 topic
+重绑到另一个 window、picker 文本恰好逐字节相同,edit 会被跳过,按钮
+仍把按键路由到**旧的(死)** window。守卫现在也比 windowId。
+
+### 🐛 修复 — `topicProbeWarnings` map 不再泄漏死 key(LOW)
+
+per-(userId, threadId, windowId) 条目过去会跟着 daemon 生命周期累积,
+现在在两个 binding 清理边界丢弃。
+
+---
+
 ## 0.3.16 — 2026-05-29
 
 ### 🐛 修复 — 409 Conflict 不再触发无限重启循环

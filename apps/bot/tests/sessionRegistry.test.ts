@@ -92,6 +92,26 @@ describe("SessionRegistry sessions", () => {
     expect(reg.getSessionByWindow("@0")?.session_id).toBe("S2");
   });
 
+  test("registerSession re-registering the same session_id on a NEW window does not throw (PK idempotent)", () => {
+    // Regression: `claude --resume <id>` spawns a fresh tmux window but
+    // reports the SAME session_id. Deleting only by window_id left the old
+    // session_id row in place → INSERT hit the session_id PRIMARY KEY →
+    // "UNIQUE constraint failed: sessions.session_id" threw out of the
+    // SessionStart transaction, the new row was never written, and the
+    // topic went silent. registerSession must delete by session_id too.
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "old", "/a");
+    reg.upsertWindow("@1", "new", "/a");
+    reg.registerSession({ sessionId: "S1", windowId: "@0", agentType: "claude", transcriptPath: "/p1", cwd: "/a" });
+    expect(() =>
+      reg.registerSession({ sessionId: "S1", windowId: "@1", agentType: "claude", transcriptPath: "/p2", cwd: "/a" })
+    ).not.toThrow();
+    // The session now lives on the new window; the old window's row is gone.
+    expect(reg.getSessionByWindow("@1")?.session_id).toBe("S1");
+    expect(reg.getSessionByWindow("@1")?.transcript_path).toBe("/p2");
+    expect(reg.getSessionByWindow("@0")).toBeNull();
+  });
+
   test("endSession deletes the row", () => {
     const reg = new SessionRegistry(inMemoryDb());
     reg.upsertWindow("@0", "x", "/a");
