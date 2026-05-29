@@ -9,6 +9,27 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.15 — 2026-05-29
+
+### 🐛 修复 — 连续 picker 卡在第一题(会话看似卡死)
+
+在 `creative-project` 多问题 brainstorm(问题 1 → 2 → 3)时发现。
+用户看到的是旧 picker / 冻住的 "Thinking…",答了也没用。
+
+`statusPolling.tick` 只要追踪的 interactive window 还在显示 *某个*
+picker 就早 return(`if (isInteractiveUi(paneText)) return`)。但
+Claude 可以从一道 AskUserQuestion **直接跳到**下一道、中间没有 idle
+间隙,于是 `isInteractiveUi` 一直是 true 而内容已经变了——Telegram
+消息从此停在第一题不再更新。
+
+`tick` 现在在 picker 还在时**重新跑** `handleInteractiveUi`,原地
+editMessageText 更新成当前问题。为避免静态 picker 每 ~2 秒 edit 一次
+的空转,`handleInteractiveUi` 现在做**内容去重**(按 user/thread 记
+上次显示的文本,没变就跳过 edit)。idle picker 零 API 调用,只有真正
+换题才打 Telegram。
+
+---
+
 ## 0.3.14 — 2026-05-29
 
 ### 🐛 修复 — 0.3.9 的 chrome guard 误拒真 AskUserQuestion picker(会话卡死)

@@ -71,7 +71,19 @@ export async function updateStatusMessage(
   let shouldCheckNewUi = true;
 
   if (interactiveWindow === windowId) {
-    if (isInteractiveUi(paneText)) return;
+    if (isInteractiveUi(paneText)) {
+      // Still showing a picker for this window — re-run handleInteractiveUi
+      // rather than early-returning. Claude can advance from one
+      // AskUserQuestion straight to the next with NO idle gap between them
+      // (problem 1 → 2 → 3 in a brainstorm), so isInteractiveUi stays true
+      // while the CONTENT changes. The old early-return left Telegram stuck
+      // on the first question's text forever; the user saw a stale picker
+      // (or a frozen "Thinking…") and answering it did nothing useful.
+      // handleInteractiveUi edits the existing message in place and
+      // content-dedups, so an unchanged picker costs no API call.
+      await handleInteractiveUi(deps, userId, windowId, threadId);
+      return;
+    }
     await clearInteractiveMessage(deps, userId, threadId);
     shouldCheckNewUi = false;
   } else if (interactiveWindow !== null) {

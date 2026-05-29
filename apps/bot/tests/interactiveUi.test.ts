@@ -93,7 +93,9 @@ describe("interactive UI", () => {
     expect(getInteractiveMessageId(100, 42)).toBe(1);
   });
 
-  it("edits an existing interactive UI message", async () => {
+  it("content-dedups: identical pane on a second call does NOT re-edit", async () => {
+    // statusPolling re-runs handleInteractiveUi every tick while a picker
+    // is up. A static picker must not fire editMessageText every ~2s.
     const deps = {
       api: fake,
       routing,
@@ -106,8 +108,40 @@ describe("interactive UI", () => {
     await handleInteractiveUi(deps, 100, "@5", 42);
     await handleInteractiveUi(deps, 100, "@5", 42);
 
+    expect(fake.messages).toHaveLength(1); // sent once
+    expect(fake.edits).toHaveLength(0); // second call deduped, no edit
+  });
+
+  it("edits in place when the pane content changes (consecutive pickers)", async () => {
+    // The bug this fixes: Claude advancing from one AskUserQuestion
+    // straight to the next (no idle gap) must update the SAME Telegram
+    // message with the new question, not leave it stuck on the old one.
+    let pane = settingsPane;
+    const deps = {
+      api: fake,
+      routing,
+      tmuxManager: {
+        findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+        capturePane: vi.fn(async () => pane)
+      }
+    };
+
+    await handleInteractiveUi(deps, 100, "@5", 42);
     expect(fake.messages).toHaveLength(1);
-    expect(fake.edits).toHaveLength(1);
+
+    // Claude moves to the next question — different picker content.
+    pane =
+      " ☐ next question\n" +
+      "\n" +
+      "Which option now?\n" +
+      "❯ 1. Alpha\n" +
+      "  2. Beta\n" +
+      "Enter to select · ↑/↓ to navigate · Esc to cancel\n";
+    await handleInteractiveUi(deps, 100, "@5", 42);
+
+    expect(fake.messages).toHaveLength(1); // still the same message
+    expect(fake.edits).toHaveLength(1); // edited in place with new content
+    expect(fake.edits[0]).toContain("next question");
   });
 
   it("clears and deletes the tracked interactive message", async () => {

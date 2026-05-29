@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.15 — 2026-05-29
+
+### 🐛 Fixed — consecutive pickers froze on the first question (session appeared stuck)
+
+Found on `creative-project` during a multi-question brainstorm
+(problem 1 → 2 → 3). The user saw a stale picker / frozen "Thinking…"
+and answering did nothing.
+
+`statusPolling.tick` early-returned whenever the tracked interactive
+window was still showing *a* picker (`if (isInteractiveUi(paneText))
+return`). But Claude can go from one AskUserQuestion straight to the
+next with no idle gap, so `isInteractiveUi` stays true while the
+content changes — the Telegram message was never updated past the
+first question.
+
+`tick` now re-runs `handleInteractiveUi` while a picker is up, editing
+the existing message in place with the current question. To avoid
+per-tick (~2s) `editMessageText` churn on a static picker,
+`handleInteractiveUi` now content-dedups (tracks last text shown per
+user/thread, skips the edit when unchanged). Idle pickers cost zero API
+calls; only genuine question changes hit Telegram.
+
+---
+
 ## 0.3.14 — 2026-05-29
 
 ### 🐛 Fixed — real AskUserQuestion pickers rejected by 0.3.9's chrome guard (session hang)

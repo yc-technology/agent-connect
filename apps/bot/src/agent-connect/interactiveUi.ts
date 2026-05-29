@@ -44,6 +44,13 @@ type InteractiveKey = `${number}:${number}`;
 
 const interactiveMessages = new Map<InteractiveKey, number>();
 const interactiveModes = new Map<InteractiveKey, string>();
+// Last picker content shown per key. Lets handleInteractiveUi skip the
+// editMessageText call when the pane hasn't changed — without this, a
+// static picker would fire an editMessageText every status-poll tick
+// (~2s) forever, each returning a 400 "not modified". With it, idle
+// pickers cost nothing and only genuine content changes (e.g. Claude
+// advancing from one AskUserQuestion straight to the next) hit the API.
+const interactiveContents = new Map<InteractiveKey, string>();
 
 export interface InteractiveUiDeps {
   api: TelegramApiLike;
@@ -74,6 +81,7 @@ export function getInteractiveMessageId(userId: number, threadId: number | null 
 export function resetInteractiveState(): void {
   interactiveMessages.clear();
   interactiveModes.clear();
+  interactiveContents.clear();
 }
 
 export function buildInteractiveKeyboard(windowId: string, uiName = ""): InlineKeyboardMarkupLike {
@@ -159,13 +167,25 @@ export async function handleInteractiveUi(
 
   const existingMessageId = interactiveMessages.get(key);
   if (existingMessageId && deps.api.editMessageText) {
+    // Content dedup: if the same picker text is already displayed in this
+    // message, skip the edit entirely. statusPolling re-runs us every tick
+    // while a picker is up (so consecutive AskUserQuestions refresh), and
+    // without this guard a static picker would editMessageText every ~2s.
+    if (interactiveContents.get(key) === content.content) {
+      interactiveModes.set(key, windowId);
+      return true;
+    }
     try {
       await deps.api.editMessageText(chatId, existingMessageId, content.content, options);
       interactiveModes.set(key, windowId);
+      interactiveContents.set(key, content.content);
       return true;
     } catch (error) {
       if (isMessageNotModified(error)) {
+        // Telegram confirms the content is already what we wanted — record
+        // it so the dedup above short-circuits subsequent ticks.
         interactiveModes.set(key, windowId);
+        interactiveContents.set(key, content.content);
         return true;
       }
       const editErr = errorMessage(error);
@@ -206,6 +226,7 @@ export async function handleInteractiveUi(
     }
     interactiveMessages.set(key, sent.message_id);
     interactiveModes.set(key, windowId);
+    interactiveContents.set(key, content.content);
     // Reset throttle state for this window so the next failure (if any) logs
     // immediately rather than being suppressed by a stale previous-error key.
     for (const k of interactiveLogLastAt.keys()) {
@@ -255,6 +276,7 @@ export async function clearInteractiveMessage(
   const messageId = interactiveMessages.get(key);
   interactiveMessages.delete(key);
   interactiveModes.delete(key);
+  interactiveContents.delete(key);
   if (!deps || !messageId || !deps.api.deleteMessage) return;
 
   const chatId = deps.routing.resolveChatId(userId, threadId);
