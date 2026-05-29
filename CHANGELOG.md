@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.14 — 2026-05-29
+
+### 🐛 Fixed — real AskUserQuestion pickers rejected by 0.3.9's chrome guard (session hang)
+
+Found on `creative-project`: a live picker never reached Telegram, so
+the user couldn't answer and the session hung. Root cause was 0.3.9's
+own chrome-anchor band-aid.
+
+0.3.9 required a `─────` chrome line within 4 lines BELOW the
+"Enter to select" footer (to suppress phantom pickers when a TG-bound
+topic discussed the bot's picker UI). But a real Claude
+AskUserQuestion frames its options with chrome ABOVE the `☐` and in
+the MIDDLE (the "Type something" / "Chat about this" split) — the
+footer itself is followed by Claude's task list, NOT chrome. So the
+guard rejected real pickers.
+
+Reverted the guard. The failure modes are asymmetric: missing a real
+picker hangs the session, while a phantom picker is a recoverable
+annoyance — detection now errs toward always surfacing real pickers.
+The phantom-on-prose case (only reproducible while discussing picker
+glyphs inside a bound topic) waits for the proper event-driven fix
+planned for 0.4.0: gate detection on Claude's `Notification` hook so
+the picker matcher never runs unless Claude actually asked.
+
+This is the third heuristic in this area to prove fragile (after
+window-name matching → probe-based, and now chrome-anchor → reverted).
+0.4.0's hook-driven approach replaces pane-content guessing entirely.
+
+---
+
 ## 0.3.13 — 2026-05-29
 
 Follow-up to 0.3.12 — close the actual root cause and a churn

@@ -9,6 +9,31 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.14 — 2026-05-29
+
+### 🐛 修复 — 0.3.9 的 chrome guard 误拒真 AskUserQuestion picker(会话卡死)
+
+在 `creative-project` 上发现:一个真 picker 没能转发到 Telegram,
+用户没法回答,会话挂住。根因是 0.3.9 自己的 chrome-anchor band-aid。
+
+0.3.9 要求 "Enter to select" footer **下方 4 行内**有 `─────` chrome
+(为了压住在 TG-bound topic 里讨论 picker UI 时的幻象 picker)。但真
+Claude AskUserQuestion 的 chrome 框在 `☐` **上方**和**中间**(Type
+something / Chat about this 的分隔)——footer 后面跟的是 Claude 的任务
+列表,**不是 chrome**。所以 guard 把真 picker 拒了。
+
+撤掉 guard。两种失败模式不对称:漏掉真 picker 会挂死会话,而幻象
+picker 只是可恢复的小烦恼——检测现在偏向"永远显示真 picker"。
+prose 幻象那个问题(只在 bound topic 里讨论 picker 字符时复现)等
+0.4.0 的事件驱动正经修:用 Claude 的 `Notification` hook 把关,
+Claude 没真问就不跑 picker 匹配。
+
+这是这块第三个被证明脆弱的 heuristic 了(继 window-name 匹配 →
+probe-based,chrome-anchor → 撤销)。0.4.0 的 hook 驱动方案会彻底
+取代"猜 pane 内容"。
+
+---
+
 ## 0.3.13 — 2026-05-29
 
 0.3.12 的后续——认真复查后补上真正的根因和一个 churn 回归。

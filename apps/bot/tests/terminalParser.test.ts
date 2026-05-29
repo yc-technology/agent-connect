@@ -373,32 +373,39 @@ describe("interactive UI extraction", () => {
     expect(result?.content).not.toContain("Plan Mode");
   });
 
-  it("does not phantom-match Claude prose discussing pickers (no chrome anchor)", () => {
-    // Reported in the wild: when a Telegram-bound topic was used to
-    // discuss the bot's own AskUserQuestion picker, Claude's response
-    // in the tmux pane contained `☐`, `←`, `Enter to select`, etc. as
-    // prose. The old extractInteractiveContent fired anyway because
-    // the top/bottom matchers don't care WHERE in the capture they
-    // hit — phantom picker rendered in TG every time we discussed the
-    // bot. requireChromeBelow on the two glyph-based AskUserQuestion
-    // variants filters this out: real Claude pickers have chrome
-    // below within 4 lines, prose doesn't.
-    const proseDiscussingPicker =
-      "› user: how does the picker work?\n" +
+  it("detects a real AskUserQuestion whose footer is followed by a task list, not chrome", () => {
+    // Regression guard for the 0.3.9→0.3.14 saga. 0.3.9 added a
+    // chrome-anchor band-aid requiring a `─────` line within 4 lines
+    // BELOW the "Enter to select" footer (to suppress prose phantoms).
+    // But a real Claude picker frames the options with chrome ABOVE the
+    // ☐ and in the MIDDLE (the Type-something / Chat-about-this split),
+    // while the footer is followed by Claude's task list — NO chrome
+    // below it. The guard rejected this live picker and left the user
+    // stuck unable to answer. 0.3.14 reverted the guard. This pane is a
+    // trimmed real capture from creative-project (@4).
+    const realPickerWithTasksBelow =
+      "⏺ 项目背景已摸清。P8 范围有几个决策点，一个个来。\n" +
+      "───────────────────────────────────────────\n" +
+      " ☐ reason 范围\n" +
       "\n" +
-      "⏺ When Claude asks a question, the TUI shows:\n" +
-      "  ☐ Option 1: Do X\n" +
-      "  ☐ Option 2: Do Y\n" +
-      "  Enter to select · ↑/↓ navigate\n" +
+      "P8 要 surface 哪些 predict reason？\n" +
       "\n" +
-      "  ← that's the cursor row, ↓ to go down.\n" +
+      "❯ 1. 全部四个（插件平价）\n" +
+      "  2. 只做 account + taxRate\n" +
+      "  3. 只做 counterparty\n" +
+      "  4. Type something.\n" +
+      "───────────────────────────────────────────\n" +
+      "  5. Chat about this\n" +
       "\n" +
-      "Hope that helps! Let me know if you have more questions.\n" +
-      "─────\n" +
-      "❯\n" +
-      "─────\n" +
-      "  ⏵⏵ bypass permissions on\n";
-    expect(extractInteractiveContent(proseDiscussingPicker)).toBeNull();
+      "Enter to select · ↑/↓ to navigate · Esc to cancel\n" +
+      "\n" +
+      "  3 tasks (0 done, 1 in progress, 2 open)\n" +
+      "  ◼ P8 brainstorm: clarify scope\n" +
+      "  ◻ P8 brainstorm: present design + write spec\n";
+    const result = extractInteractiveContent(realPickerWithTasksBelow);
+    expect(result?.name).toBe("AskUserQuestion");
+    expect(result?.content).toContain("reason 范围");
+    expect(result?.content).toContain("全部四个");
   });
 
   it("extracts Claude SessionSurvey (data-usage prompt with y/n/d shortcuts)", () => {

@@ -8,11 +8,6 @@ interface UIPattern {
   top: RegExp[];
   bottom: RegExp[];
   minGap: number;
-  // When true, the matched region must be followed (within 4 lines) by a
-  // long-dash chrome separator. See `tryExtract` for rationale. Default
-  // false; opt-in for patterns whose top/bottom matchers are common in
-  // prose (Claude's checkbox-style AskUserQuestion).
-  requireChromeBelow?: boolean;
 }
 
 const UI_PATTERNS: UIPattern[] = [
@@ -26,15 +21,13 @@ const UI_PATTERNS: UIPattern[] = [
     name: "AskUserQuestion",
     top: [/^\s*←\s+[☐✔☒]/u],
     bottom: [],
-    minGap: 1,
-    requireChromeBelow: true
+    minGap: 1
   },
   {
     name: "AskUserQuestion",
     top: [/^\s*[☐✔☒]/u],
     bottom: [/^\s*Enter to select/],
-    minGap: 1,
-    requireChromeBelow: true
+    minGap: 1
   },
   {
     name: "PermissionPrompt",
@@ -212,45 +205,20 @@ function tryExtract(lines: string[], pattern: UIPattern): InteractiveUIContent |
     return null;
   }
 
-  // Chrome-anchor guard for prose-false-positive-prone patterns. The two
-  // Claude AskUserQuestion variants (just `☐` checkbox + "Enter to select"
-  // footer) match all over plain prose — including a Telegram conversation
-  // that happens to be discussing the bot's own picker UI. Without an
-  // anchor, every time we talk about pickers in a TG-bound topic, the
-  // tmux pane shows Claude's response containing `☐`/"Enter to select"/etc
-  // → extractInteractiveContent fires → phantom picker rendered in TG.
-  //
-  // Real Claude TUI pickers are framed by long-dash chrome (U+2500 ≥5) on
-  // BOTH sides. Prose containing the same glyphs has chrome only at the
-  // bottom of pane (the input-area chrome), far below. Requiring chrome
-  // within `CHROME_PROXIMITY` lines below bottomIdx catches the prose case
-  // without breaking real TUI capture.
-  //
-  // Opt-in per pattern because: Codex's distinctive `Question N/M` +
-  // `tab to add notes | enter to submit answer` patterns are specific
-  // enough that no realistic prose hits them; ditto Settings /
-  // ExitPlanMode / Bash approval / etc. Only the two glyph-based Claude
-  // variants need the extra anchor.
-  //
-  // BAND-AID. This is heuristic-on-heuristic — magic proximity number,
-  // assumes chrome layout never changes, hand-curated pattern flag list.
-  // The proper fix is event-driven: subscribe to Claude's `Notification`
-  // hook (fires when claude is blocked waiting for user input), set a
-  // per-window "pending input" flag, and only run extractInteractiveContent
-  // when the flag is set. Prose can't trigger phantom pickers if the
-  // detection path doesn't run at all. Scheduled for 0.4.0 — see
-  // CHANGELOG/0.3.9 entry for rationale on shipping the band-aid first.
-  if (pattern.requireChromeBelow) {
-    const CHROME_PROXIMITY = 4;
-    let chromeNearby = false;
-    for (let i = bottomIdx + 1; i < Math.min(lines.length, bottomIdx + 1 + CHROME_PROXIMITY); i += 1) {
-      if (LONG_DASH_RE.test(lines[i] ?? "")) {
-        chromeNearby = true;
-        break;
-      }
-    }
-    if (!chromeNearby) return null;
-  }
+  // NOTE: 0.3.9 added a "chrome must appear within 4 lines BELOW the
+  // matched footer" guard here to suppress phantom pickers when a
+  // TG-bound topic discussed the bot's own picker UI (prose containing
+  // `☐` / "Enter to select"). 0.3.14 REVERTED it: a real AskUserQuestion
+  // pane frames the picker with chrome ABOVE the `☐` and in the MIDDLE
+  // (the "Type something" / "Chat about this" split), but the footer is
+  // followed by Claude's task list, NOT chrome — so the guard rejected a
+  // live picker and left the user stuck unable to answer (a far worse
+  // failure than the rare cosmetic phantom). The failure modes are
+  // asymmetric: missing a real picker hangs the session; a phantom is a
+  // recoverable annoyance. We err toward always detecting real pickers.
+  // The phantom-on-prose case waits for the proper event-driven fix
+  // (0.4.0: gate detection on Claude's `Notification` hook so the
+  // matcher never runs unless Claude actually asked).
 
   const content = lines.slice(topIdx, bottomIdx + 1).join("\n").trimEnd();
   return {
