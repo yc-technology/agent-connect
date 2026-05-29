@@ -44,6 +44,24 @@ export interface BotRuntimeStatus {
 // Fastify /hook/events endpoint uses this to route incoming events.
 export const hookRouterRegistry = new Map<string, HookRouter>();
 
+/**
+ * True if the error is a Telegram 409 Conflict from getUpdates — i.e.
+ * another long-poll is already running for this bot token (a second
+ * agent-connect instance sharing the token). grammy surfaces it as a
+ * GrammyError with `error_code: 409`; we also match the description text
+ * defensively in case the error is wrapped/re-thrown without the numeric
+ * code intact.
+ */
+export function isPollingConflict(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { error_code?: unknown; description?: unknown; message?: unknown };
+  if (e.error_code === 409) return true;
+  const text = `${typeof e.description === "string" ? e.description : ""} ${
+    typeof e.message === "string" ? e.message : ""
+  }`.toLowerCase();
+  return text.includes("409") && text.includes("conflict");
+}
+
 export class MultiBotRuntimeManager {
   private readonly instances = new Map<string, BotRuntimeInstance>();
   private readonly statuses = new Map<string, BotRuntimeStatus>();
@@ -237,6 +255,36 @@ export class MultiBotRuntimeManager {
       });
 
       void bot.start({ allowed_updates: ["message", "callback_query"] }).catch((error: unknown) => {
+        // A 409 Conflict means another getUpdates is already running for
+        // this token — i.e. a second agent-connect instance is sharing the
+        // bot token. Restarting THIS instance can't fix that (the other
+        // instance still holds the long-poll), so flagging it crashed →
+        // healthz 503 → supervisor restart would just thrash every ~30s
+        // forever. This is an intentional yield, not an unexpected crash:
+        // like the supervisor's code-2 "explicit bail", we stay down
+        // quietly and log loudly so the operator kills the duplicate.
+        // Crucially we do NOT add to crashedBots, so healthz stays green
+        // and the supervisor leaves us alone.
+        if (isPollingConflict(error)) {
+          logger().error(
+            { botId: record.id, err: errorMessage(error) },
+            "bot runtime got 409 Conflict — another instance is polling this " +
+              "bot token. Staying down (not restarting). Run `agc stop --all` " +
+              "on the duplicate, or check for a second agent-connect deployment."
+          );
+          this.setStatus(record.id, {
+            running: false,
+            stoppedAt: new Date().toISOString(),
+            lastError: errorMessage(error)
+          });
+          const dup = this.instances.get(record.id);
+          if (dup) {
+            this.instances.delete(record.id);
+            void this.stopInstance(dup);
+          }
+          return;
+        }
+
         logger().error({ botId: record.id, err: error }, "bot runtime stopped with error");
         // Mark crashed BEFORE the cleanup so /healthz returns 503 and the
         // supervisor's healthz probe trips a restart instead of staying

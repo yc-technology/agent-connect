@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.16 — 2026-05-29
+
+### 🐛 Fixed — 409 Conflict no longer triggers an endless restart loop
+
+0.3.12 flagged any `bot.start` rejection as crashed → `/healthz` 503 →
+supervisor restart. Correct for transient failures, but wrong for a
+409 Conflict (getUpdates): 409 means a second agent-connect instance is
+sharing the bot token, and restarting THIS instance can't fix it (the
+other still holds the long-poll). The result was a kill+respawn every
+~30s forever — and since the child process never self-exits (Fastify
+stays up; the supervisor does the killing), the crash-loop backstop
+never tripped.
+
+`bot.start`'s catch now special-cases 409 (`isPollingConflict`): it
+does NOT flag crashed, so healthz stays green and the supervisor leaves
+it alone. The bot yields quietly and logs an actionable error
+("another instance is polling this token — run `agc stop --all` on the
+duplicate"), mirroring the supervisor's code-2 "explicit bail"
+philosophy. Non-409 crashes still flag crashed → restart.
+
+Normal `agc restart` doesn't hit this: the supervisor SIGTERMs the old
+child and waits for it to exit (its handler runs `bot.stop()`, cleanly
+releasing the Telegram lock) before spawning the new child — no
+concurrent poll, no 409.
+
+---
+
 ## 0.3.15 — 2026-05-29
 
 ### 🐛 Fixed — consecutive pickers froze on the first question (session appeared stuck)

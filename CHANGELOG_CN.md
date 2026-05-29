@@ -9,6 +9,29 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.16 — 2026-05-29
+
+### 🐛 修复 — 409 Conflict 不再触发无限重启循环
+
+0.3.12 把任何 `bot.start` reject 都标记为 crashed → `/healthz` 503 →
+supervisor 重启。对瞬时故障是对的,但对 409 Conflict(getUpdates)是
+错的:409 意味着有第二个 agent-connect 实例在抢同一个 bot token,重启
+**这个**实例修不了(另一个还握着 long-poll)。结果就是每 ~30 秒一次
+kill+respawn 永不停——而且 child 进程从不自己退出(Fastify 还活、是
+supervisor 主动杀的),crash-loop backstop 也就从不触发。
+
+`bot.start` 的 catch 现在特判 409(`isPollingConflict`):**不**标记
+crashed,healthz 保持绿、supervisor 不动它。bot 安静让位,并打一条可
+操作的错误日志("另一个实例在轮询此 token——在重复实例上跑
+`agc stop --all`"),跟 supervisor 的 code-2 "explicit bail" 哲学一致。
+非 409 的崩溃仍然标 crashed → 重启。
+
+正常 `agc restart` 不会走到这条路:supervisor 先 SIGTERM 旧 child 并
+等它退出(它的 handler 跑 `bot.stop()` 干净释放 Telegram 锁)**再**
+spawn 新 child——没有并发轮询,没有 409。
+
+---
+
 ## 0.3.15 — 2026-05-29
 
 ### 🐛 修复 — 连续 picker 卡在第一题(会话看似卡死)
