@@ -9,6 +9,22 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.3.18 — 2026-06-01
+
+### 🐛 修复 — interactive picker 闪烁(消失又出现),多选最明显
+
+`handleInteractiveUi` 用与当前显示相同的内容编辑 picker 消息时,
+Telegram 返回 `400: ... message is not modified`(小写)。
+`isMessageNotModified` 匹配的是 `"Message is not modified"`(大写 M),
+对不上 → 无害的"未修改"被当成真失败 → 回退到 sendMessage + deleteMessage。
+于是 picker 每个轮询 tick 都被删掉重发 → 可见闪烁(几秒内换了 ~6 个
+message id),多选最严重(每次 Space 切换 pane 都重绘)。
+
+改成大小写不敏感;编辑被正确当作成功的 no-op——同一条消息原地不动,
+不重发、不闪。
+
+---
+
 ## 0.3.17 — 2026-05-29
 
 整体 bug 审查找出的三个正确性修复。

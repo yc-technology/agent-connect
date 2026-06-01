@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.3.18 — 2026-06-01
+
+### 🐛 Fixed — interactive picker flicker (disappears/reappears), worst on multi-select
+
+When `handleInteractiveUi` edited a picker message with content identical
+to what was displayed, Telegram returned `400: ... message is not
+modified`. `isMessageNotModified` matched `"Message is not modified"`
+(capital M), but Telegram's text is lowercase — so the benign no-op edit
+was misclassified as a real failure and fell through to sendMessage +
+deleteMessage. The picker was deleted and re-sent every poll tick →
+visible flicker (observed cycling through ~6 message ids in seconds),
+worst on multi-select where the pane re-renders on each Space toggle.
+
+Now matched case-insensitively; the edit is treated as a successful
+no-op — same message stays put, no resend, no flicker.
+
+---
+
 ## 0.3.17 — 2026-05-29
 
 Three correctness fixes from a full bug-hunt review.

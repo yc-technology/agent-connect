@@ -144,6 +144,56 @@ describe("interactive UI", () => {
     expect(fake.edits[0]).toContain("next question");
   });
 
+  it("swallows Telegram's lowercase 'message is not modified' instead of resending (no flicker)", async () => {
+    // Regression: isMessageNotModified looked for "Message is not modified"
+    // (capital M) but Telegram sends lowercase "message is not modified".
+    // The mismatch made a benign no-op edit fall through to
+    // sendMessage + deleteMessage → the picker flickered (disappear/reappear)
+    // every poll tick, worst on multi-select. The error string below is the
+    // EXACT text Telegram returns.
+    let pane = settingsPane;
+    const sends: string[] = [];
+    const deletes: number[] = [];
+    const api = {
+      sendMessage: vi.fn(async (_c: number, text: string) => {
+        sends.push(text);
+        return { message_id: sends.length };
+      }),
+      editMessageText: vi.fn(async () => {
+        throw new Error(
+          "Call to 'editMessageText' failed! (400: Bad Request: message is not modified: " +
+            "specified new message content and reply markup are exactly the same as a current " +
+            "content and reply markup of the message)"
+        );
+      }),
+      deleteMessage: vi.fn(async (_c: number, id: number) => {
+        deletes.push(id);
+      })
+    } as unknown as TelegramApiLike;
+    const deps = {
+      api,
+      routing,
+      tmuxManager: {
+        findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "p", cwd: "/tmp", paneCurrentCommand: "" })),
+        capturePane: vi.fn(async () => pane)
+      }
+    };
+
+    // First call sends the picker.
+    await handleInteractiveUi(deps, 100, "@5", 42);
+    expect(sends).toHaveLength(1);
+
+    // Change pane so the content-dedup does NOT short-circuit → an actual
+    // edit is attempted → Telegram throws "message is not modified".
+    pane = settingsPane + "\n(refreshed)\n Enter to confirm · Esc to exit\n";
+    await handleInteractiveUi(deps, 100, "@5", 42);
+
+    // The not-modified error must be swallowed: no second send, no delete.
+    // (Pre-fix: sends would be 2 and deletes would be [1] — the flicker.)
+    expect(sends).toHaveLength(1);
+    expect(deletes).toEqual([]);
+  });
+
   it("re-edits when the window changes even if picker text is identical (keyboard routes to new window)", async () => {
     // The inline keyboard's callback_data embeds the windowId. If a topic
     // rebinds to a different window showing byte-identical picker text, the

@@ -298,5 +298,12 @@ function withThread(threadId: number | null, options: Record<string, unknown>): 
 }
 
 function isMessageNotModified(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("Message is not modified");
+  // Telegram's actual error text is lowercase: "Bad Request: message is not
+  // modified: ...". The previous check looked for "Message is not modified"
+  // (capital M) and NEVER matched, so a benign no-op edit was treated as a
+  // real failure → the catch fell through to sendMessage + deleteMessage,
+  // making the picker message disappear and reappear every poll tick
+  // (visible flicker, worst on multi-select where the pane re-renders on
+  // every Space toggle). Match case-insensitively.
+  return error instanceof Error && /message is not modified/i.test(error.message);
 }
