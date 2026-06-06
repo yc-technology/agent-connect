@@ -305,6 +305,43 @@ describe("SessionRegistry recovery anchor (last_session_id)", () => {
     expect(row.last_session_id).toBe("sess-gamma");
   });
 
+  test("getRecoveryInfo returns session_id + cwd after soft-delete (cwd survives via last_cwd)", () => {
+    // The lazy auto-resume path needs cwd, but soft-delete FK-cascades the
+    // sessions row (cwd's normal home) away. registerSession copies cwd onto the
+    // binding as last_cwd so getRecoveryInfo can still produce it.
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/work");
+    reg.bindThread(111, 42, "@0");
+    registerStartCase(reg, "sess-alpha"); // cwd "/work"
+
+    // Healthy (not recovery_pending) → no resume info offered.
+    expect(reg.getRecoveryInfo(111, 42)).toBeNull();
+
+    // Simulate statusPolling soft-delete: mark + deleteWindow (cascades sessions).
+    reg.markBindingForRecovery(111, 42, "@0");
+    reg.deleteWindow("@0");
+    expect(reg.getSessionByWindow("@0")).toBeNull(); // sessions row really gone
+
+    expect(reg.getRecoveryInfo(111, 42)).toEqual({ sessionId: "sess-alpha", cwd: "/work" });
+  });
+
+  test("markBindingForRecovery(expectedWindowId) is a no-op once the topic was rebound elsewhere", () => {
+    const reg = new SessionRegistry(inMemoryDb());
+    reg.upsertWindow("@0", "x", "/work");
+    reg.upsertWindow("@9", "y", "/work");
+    reg.bindThread(111, 42, "@0");
+    // A concurrent lazy-resume rebinds onto a fresh live window @9.
+    reg.bindThread(111, 42, "@9");
+
+    // A stale soft-delete naming the OLD window must NOT clobber the rebind.
+    reg.markBindingForRecovery(111, 42, "@0");
+    expect(reg.resolveWindowForThread(111, 42)).toBe("@9");
+
+    // Naming the current window does soft-delete it.
+    reg.markBindingForRecovery(111, 42, "@9");
+    expect(reg.resolveWindowForThread(111, 42)).toBeNull();
+  });
+
   test("listRecoverableBindings only surfaces bindings that are recovery_pending AND have an anchor", () => {
     // (codex review: previously this filter was `last_session_id IS NOT NULL`,
     // which would surface healthy bindings too and risk misleading "resume"
@@ -446,7 +483,7 @@ describe("SessionRegistry soft-delete recovery", () => {
     // v2 had last_session_id but NOT_NULL window_id and CASCADE FK. The
     // schema-recreate migration must add recovery_pending and flip the FK.
     const db = inMemoryDb();
-    db.pragma("foreign_keys = ON");
+    db.exec("PRAGMA foreign_keys = ON");
     db.exec(`
       CREATE TABLE windows (
         window_id TEXT PRIMARY KEY,
@@ -492,5 +529,54 @@ describe("SessionRegistry soft-delete recovery", () => {
       .get() as { window_id: string | null; last_session_id: string };
     expect(afterFk.window_id).toBeNull();
     expect(afterFk.last_session_id).toBe("sess-legacy");
+  });
+
+  test("migrateAddLastCwd backfills last_cwd from live sessions for pre-upgrade bindings", () => {
+    // A DB written before last_cwd existed, with a currently-live session. On
+    // upgrade the column is added AND backfilled from the sessions row, so the
+    // topic can lazy-resume on its first reboot without waiting for a fresh
+    // SessionStart.
+    const db = inMemoryDb();
+    db.exec("PRAGMA foreign_keys = ON");
+    db.exec(`
+      CREATE TABLE windows (
+        window_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE sessions (
+        session_id TEXT PRIMARY KEY,
+        window_id TEXT NOT NULL,
+        agent_type TEXT NOT NULL,
+        transcript_path TEXT NOT NULL,
+        cwd TEXT NOT NULL,
+        source TEXT,
+        last_byte_offset INTEGER NOT NULL DEFAULT 0,
+        started_at INTEGER NOT NULL,
+        FOREIGN KEY (window_id) REFERENCES windows(window_id) ON DELETE CASCADE
+      );
+      CREATE TABLE thread_bindings (
+        user_id INTEGER NOT NULL,
+        thread_id INTEGER NOT NULL,
+        window_id TEXT NOT NULL,
+        group_chat_id INTEGER,
+        topic_probe_message_id INTEGER,
+        bound_at INTEGER NOT NULL,
+        last_session_id TEXT,
+        PRIMARY KEY (user_id, thread_id),
+        FOREIGN KEY (window_id) REFERENCES windows(window_id) ON DELETE CASCADE
+      );
+      INSERT INTO windows VALUES('@3', 'proj', '/srv/app', 1);
+      INSERT INTO sessions VALUES('sess-live', '@3', 'claude', '/t/sess-live.jsonl', '/srv/app', NULL, 0, 1);
+      INSERT INTO thread_bindings VALUES(111, 42, '@3', NULL, NULL, 1, 'sess-live');
+    `);
+
+    new SessionRegistry(db); // runs migrations incl. migrateAddLastCwd backfill
+
+    const row = db
+      .prepare("SELECT last_cwd FROM thread_bindings WHERE user_id = 111 AND thread_id = 42")
+      .get() as { last_cwd: string | null };
+    expect(row.last_cwd).toBe("/srv/app");
   });
 });

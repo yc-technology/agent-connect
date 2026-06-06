@@ -193,6 +193,46 @@ during that window, `agc hook` → import bot/dist → import telegramify
 dist → ERR_MODULE_NOT_FOUND. Usually self-corrects on the next hook
 fire. To avoid entirely, `agc stop` before `pnpm -r build`.
 
+### Auto-start at login + reboot recovery (macOS)
+
+```bash
+agc autostart            # install launchd LaunchAgent (com.yc-tech.agent-connect)
+agc autostart status     # installed? loaded?
+agc autostart remove     # uninstall (running daemon left untouched)
+```
+
+The LaunchAgent is **ignition only**: `RunAtLoad=true`, `KeepAlive=false`, so
+launchd fires `agc start --daemon` once at login and our supervisor owns
+keepalive thereafter. We deliberately do NOT let launchd `KeepAlive` the job —
+that would double-supervise and fight the anti-double-start tcpProbe (code 2),
+producing a relaunch loop. The plist augments `PATH` with `/opt/homebrew/bin`
+(launchd's default PATH lacks Homebrew, and the bot shells out to `tmux`) and
+propagates the installer's `AGENT_CONNECT_*` env. See
+[autostart.ts](apps/bot/src/agent-connect/autostart.ts). Install with the
+**global** `agc` after `agc upgrade` — `ProgramArguments` pins `process.argv[1]`,
+so installing from a dev checkout would hard-code the checkout path.
+
+**Reboot ≠ resume of live processes.** A reboot kills the tmux server and every
+Claude/Codex process; only SQLite and the on-disk transcripts survive. Recovery
+is **lazy** — no window is relaunched until you actually message a topic. The
+non-obvious trap: on the first post-reboot `statusPolling` tick, every bound
+window is found dead and **soft-deleted** — `markBindingForRecovery` nulls the
+in-memory binding (so `getWindowForThread` returns null) and `deleteWindow`
+FK-CASCADE-deletes the `sessions` row (taking its `cwd`). So the resume anchors
+must live on the *binding*, not the session: `registerSession` copies
+`session_id` + `cwd` onto `thread_bindings` as `last_session_id` / `last_cwd`
+(and `migrateAddLastCwd` backfills `last_cwd` from live sessions on upgrade).
+The next message lands in the **`!boundWindowId`** branch of `textMessageHandler`;
+`getRecoveryInfo` returns those anchors and `resumeOntoNewWindow` recreates the
+window with `claude --resume` + rebinds. (`tryResumeBoundWindow` is only the
+narrow fast-path for a message that beats the first statusPolling tick, where the
+sessions row still exists.) **`SessionManager.resolveStaleIds` must NOT drop a
+binding whose window vanished and can't be remapped by name** — after a tmux
+*server* restart only `__main__` survives, nothing remaps, and dropping the
+binding from memory bypasses the whole recovery path (statusPolling never sees it,
+so `recovery_pending` is never set). Keep the stale binding so the authoritative
+soft-delete can flip it to recovery state.
+
 ### Env knobs (operational)
 
 | Var | Default | What |
@@ -365,6 +405,18 @@ them when refactoring.
   the full topic-binding graph in one statement — used by
   `statusPolling.cleanupTopicBinding` when a tmux window vanishes.
   Don't manually delete from child tables; let the FK do its work.
+- **SQLite is `node:sqlite`, not `better-sqlite3`.** Built-in = no native
+  addon = no NODE_MODULE_VERSION/ABI mismatch when Node is upgraded under an
+  installed daemon (the old crash-loop). All DB access goes through
+  [db.ts](apps/bot/src/agent-connect/db.ts): `openDatabase()` (FK off by
+  default, matching better-sqlite3, enabled per-connection by SessionRegistry)
+  and `dbTransaction(db, fn)`. **`dbTransaction` uses uniquely-named
+  SAVEPOINTs, not `BEGIN`/`COMMIT`** — a plain `BEGIN` inside a `BEGIN` throws
+  "cannot start a transaction within a transaction" (the migration wraps the
+  whole import in a transaction and calls `registerSession`, which transacts
+  again). Savepoints nest at any depth; keep that property if you touch the
+  helper. Row reads cast `.all()/.get()` via `as unknown as Row` (node:sqlite
+  returns typed `Record`s, not `unknown`). Requires Node >= 22.5.
 
 ## Architecture Details
 

@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { openDatabase, type SqliteDatabase } from "./db.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -32,12 +32,12 @@ interface BotConfigRow {
 
 export class SqliteConfigStore {
   readonly dbPath: string;
-  private readonly db: Database.Database;
+  private readonly db: SqliteDatabase;
 
   constructor(dbPath = defaultConfigDbPath()) {
     this.dbPath = dbPath;
     mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
+    this.db = openDatabase(dbPath);
     this.migrate();
   }
 

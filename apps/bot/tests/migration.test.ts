@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { openDatabase } from "../src/agent-connect/db.js";
 import { migrateJsonToSqliteIfNeeded } from "../src/agent-connect/migration.js";
 import { SessionRegistry } from "../src/agent-connect/sessionRegistry.js";
 
@@ -29,7 +29,7 @@ function writeFixtures(args: {
 
 describe("migrateJsonToSqliteIfNeeded", () => {
   test("no-op when bot.sqlite already exists", async () => {
-    new Database(join(botDir, "bot.sqlite")).close();
+    openDatabase(join(botDir, "bot.sqlite")).close();
     writeFixtures({
       state: { window_states: { "@0": { session_id: "S", cwd: "/a", window_name: "x" } } }
     });
@@ -40,7 +40,7 @@ describe("migrateJsonToSqliteIfNeeded", () => {
   test("creates schema and skips import when no JSON files", async () => {
     await migrateJsonToSqliteIfNeeded(botDir, "tmux-test");
     expect(existsSync(join(botDir, "bot.sqlite"))).toBe(true);
-    const db = new Database(join(botDir, "bot.sqlite"));
+    const db = openDatabase(join(botDir, "bot.sqlite"));
     const reg = new SessionRegistry(db);
     expect(reg.listLiveWindows()).toEqual([]);
     db.close();
@@ -68,7 +68,7 @@ describe("migrateJsonToSqliteIfNeeded", () => {
 
     await migrateJsonToSqliteIfNeeded(botDir, "tmux-test");
 
-    const reg = new SessionRegistry(new Database(join(botDir, "bot.sqlite")));
+    const reg = new SessionRegistry(openDatabase(join(botDir, "bot.sqlite")));
     expect(reg.listLiveWindows()).toMatchObject([
       { window_id: "@0", display_name: "proj", cwd: "/proj" }
     ]);

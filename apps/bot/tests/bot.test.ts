@@ -1010,6 +1010,149 @@ describe("bot text and picker flow", () => {
     expect(bashCapture.start).toHaveBeenCalledWith(12345, 42, "@5", "ls -la");
   });
 
+  it("lazy-resumes a bound topic whose window vanished (reboot) instead of unbinding", async () => {
+    const store = new BotStateStore();
+    const reply = vi.fn();
+    const bindThread = vi.fn();
+    const unbindThread = vi.fn();
+    const sendToWindow = vi.fn(async () => [true, "ok"] as [boolean, string]);
+    const waitForSessionMapEntry = vi.fn(async () => true);
+    const deleteWindow = vi.fn();
+    // Old window @5 is gone, but its sessions row survived the reboot with the
+    // cwd + session_id needed to resume. /tmp exists so the dir guard passes.
+    const createWindow = vi.fn(async () => [true, "Created", "project", "@9"] as [boolean, string, string, string]);
+
+    await textMessageHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42, text: "continue please" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => "@5",
+        iterThreadBindings: noBindings,
+        getDisplayName: () => "project",
+        unbindThread,
+        sendToWindow,
+        getSessionByWindow: vi.fn(() => ({ session_id: "sess-abc", cwd: "/tmp" }) as never),
+        bindThread,
+        waitForSessionMapEntry,
+        deleteWindow
+      },
+      {
+        listWindows: vi.fn(),
+        findWindowById: vi.fn(async () => null), // window gone after reboot
+        createWindow
+      },
+      store
+    );
+
+    expect(createWindow).toHaveBeenCalledWith("/tmp", { resumeSessionId: "sess-abc" });
+    expect(bindThread).toHaveBeenCalledWith(12345, 42, "@9", "project");
+    expect(sendToWindow).toHaveBeenCalledWith("@9", "continue please");
+    expect(deleteWindow).toHaveBeenCalledWith("@5"); // orphan dead-window row cleaned up
+    expect(unbindThread).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining("Restoring previous session"),
+      expect.anything()
+    );
+  });
+
+  it("falls back to unbind when a vanished window has no session row to resume", async () => {
+    const store = new BotStateStore();
+    const reply = vi.fn();
+    const unbindThread = vi.fn();
+    const createWindow = vi.fn();
+
+    await textMessageHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42, text: "hi" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => "@5",
+        iterThreadBindings: noBindings,
+        getDisplayName: () => "project",
+        unbindThread,
+        sendToWindow: vi.fn(),
+        getSessionByWindow: vi.fn(() => null), // no anchor → can't resume
+        bindThread: vi.fn(),
+        waitForSessionMapEntry: vi.fn(async () => true)
+      },
+      {
+        listWindows: vi.fn(),
+        findWindowById: vi.fn(async () => null),
+        createWindow
+      },
+      store
+    );
+
+    expect(createWindow).not.toHaveBeenCalled();
+    expect(unbindThread).toHaveBeenCalledWith(12345, 42);
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining("no longer exists"),
+      expect.anything()
+    );
+  });
+
+  it("auto-resumes from the recovery anchor when the binding was soft-deleted (the real reboot path)", async () => {
+    // After a reboot, statusPolling soft-deletes the binding before the user
+    // messages: window_id → NULL (so getWindowForThread returns null) and the
+    // sessions row is cascade-deleted. cwd + session_id survive on the binding
+    // as last_cwd / last_session_id, surfaced via getRecoveryInfo. The handler
+    // must resume from that instead of showing the directory picker.
+    const store = new BotStateStore();
+    const reply = vi.fn();
+    const bindThread = vi.fn();
+    const sendToWindow = vi.fn(async () => [true, "ok"] as [boolean, string]);
+    const createWindow = vi.fn(async () => [true, "Created", "project", "@12"] as [boolean, string, string, string]);
+    const listWindows = vi.fn(async () => []);
+
+    await textMessageHandler(
+      {
+        from: { id: 12345 } as never,
+        msg: { message_thread_id: 42, text: "keep going" } as never,
+        chat: { id: -100, type: "supergroup" } as never,
+        reply: reply as never
+      },
+      config,
+      {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => null, // soft-deleted → unbound branch
+        iterThreadBindings: noBindings,
+        getDisplayName: () => "project",
+        unbindThread: vi.fn(),
+        sendToWindow,
+        getSessionByWindow: vi.fn(() => null),
+        getRecoveryInfo: vi.fn(() => ({ sessionId: "sess-xyz", cwd: "/tmp" })),
+        bindThread,
+        waitForSessionMapEntry: vi.fn(async () => true)
+      },
+      {
+        listWindows,
+        findWindowById: vi.fn(),
+        createWindow
+      },
+      store
+    );
+
+    expect(createWindow).toHaveBeenCalledWith("/tmp", { resumeSessionId: "sess-xyz" });
+    expect(bindThread).toHaveBeenCalledWith(12345, 42, "@12", "project");
+    expect(sendToWindow).toHaveBeenCalledWith("@12", "keep going");
+    expect(listWindows).not.toHaveBeenCalled(); // never fell through to the picker
+    expect(reply).toHaveBeenCalledWith(
+      expect.stringContaining("Restoring previous session"),
+      expect.anything()
+    );
+  });
+
   it("binds an existing window and forwards pending text", async () => {
     const store = new BotStateStore();
     Object.assign(store.userData(12345), {

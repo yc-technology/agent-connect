@@ -653,8 +653,18 @@ export async function textMessageHandler(
     | "sendToWindow"
     | "getSessionByWindow"
   > &
-    Partial<Pick<SessionManager, "setTopicProbeMessageId">>,
-  tmuxManager: Pick<TmuxManager, "listWindows" | "findWindowById">,
+    Partial<
+      Pick<
+        SessionManager,
+        | "setTopicProbeMessageId"
+        | "bindThread"
+        | "waitForSessionMapEntry"
+        | "getRecoveryInfo"
+        | "deleteWindow"
+      >
+    >,
+  tmuxManager: Pick<TmuxManager, "listWindows" | "findWindowById"> &
+    Partial<Pick<TmuxManager, "createWindow">>,
   stateStore = defaultBotState,
   options: BotHandlerOptions = {}
 ): Promise<void> {
@@ -704,6 +714,28 @@ export async function textMessageHandler(
 
   const boundWindowId = sessionManager.getWindowForThread(userId, threadId);
   if (!boundWindowId) {
+    // Lazy auto-resume (the reboot case). statusPolling soft-deletes the binding
+    // on its first post-reboot tick — nulling window_id and cascade-deleting the
+    // sessions row — so by the time a message arrives the topic is here, in the
+    // unbound branch, in recovery_pending state. The cwd + session_id survive on
+    // the binding (last_cwd / last_session_id), so resume transparently instead
+    // of dumping the user into the directory picker.
+    const recovery = sessionManager.getRecoveryInfo?.(userId, threadId);
+    if (recovery) {
+      const resumed = await resumeOntoNewWindow(
+        ctx,
+        userId,
+        threadId,
+        recovery.cwd,
+        recovery.sessionId,
+        ctx.msg.text,
+        sessionManager,
+        tmuxManager,
+        options
+      );
+      if (resumed) return;
+    }
+
     const windows = await tmuxManager.listWindows();
     const boundIds = new Set([...sessionManager.iterThreadBindings()].map(([, , windowId]) => windowId));
     // Only offer windows that the bot has actually registered as managed
@@ -750,6 +782,26 @@ export async function textMessageHandler(
 
   const window = await tmuxManager.findWindowById(boundWindowId);
   if (!window) {
+    // Lazy auto-resume. The bound tmux window is gone — the dominant cause is
+    // a machine reboot: the tmux server restarted and reassigned window ids,
+    // so the stored `@N` no longer exists. The sessions row survives the
+    // reboot and still carries the cwd + session_id, so we can transparently
+    // recreate the window with `claude --resume <id>`, rebind the topic to the
+    // new window, and forward this very message — instead of dropping the
+    // binding and forcing the user to start over (the old behavior, kept as a
+    // fallback below when there's no anchor to resume from).
+    const resumed = await tryResumeBoundWindow(
+      ctx,
+      userId,
+      threadId,
+      boundWindowId,
+      ctx.msg.text,
+      sessionManager,
+      tmuxManager,
+      options
+    );
+    if (resumed) return;
+
     const display = sessionManager.getDisplayName(boundWindowId);
     sessionManager.unbindThread(userId, threadId);
     await replyWithFallback(ctx, `❌ Window '${display}' no longer exists. Binding removed.\nSend a message to start a new session.`);
@@ -1608,6 +1660,113 @@ async function handleSessionNewCallback(
   clearSessionPickerState(userData);
   delete userData[SELECTED_PATH_KEY];
   await createAndBindWindow(ctx, userData, userId, selectedPath, threadId, config.agentType, sessionManager, tmuxManager);
+}
+
+type ResumeSessionManager = Pick<SessionManager, "sendToWindow"> &
+  Partial<Pick<SessionManager, "bindThread" | "waitForSessionMapEntry" | "deleteWindow">>;
+
+/**
+ * Shared core for lazy session recovery: recreate a tmux window at `cwd` running
+ * `claude --resume <resumeSessionId>`, rebind the topic to it, and forward
+ * `pendingText`. Returns `true` if it handled the message (resumed, or
+ * tried-and-failed with a user-facing error), `false` if it can't resume
+ * (capability not wired / cwd gone) so the caller falls back.
+ */
+async function resumeOntoNewWindow(
+  ctx: Pick<Context, "reply">,
+  userId: number,
+  threadId: number,
+  cwd: string,
+  resumeSessionId: string,
+  pendingText: string,
+  sessionManager: ResumeSessionManager,
+  tmuxManager: Partial<Pick<TmuxManager, "createWindow">>,
+  options: BotHandlerOptions,
+  // Fast-path only: the dead window id we're resuming away from. The window row
+  // is still in the DB (statusPolling hasn't soft-deleted it yet), so clean it
+  // up after a successful rebind. Omitted by the recovery branch, whose old
+  // window was already deleted by statusPolling.
+  staleWindowId?: string
+): Promise<boolean> {
+  // Capability gate: legacy/partial call sites (and some unit tests) don't wire
+  // these. Without them we can't resume — let the caller fall back.
+  if (!tmuxManager.createWindow || !sessionManager.bindThread) return false;
+  if (!isDirectory(cwd)) {
+    // cwd recorded but no longer on disk (dir deleted/unmounted). Nothing to
+    // resume into — fall back so the user gets the clean "start over" path.
+    return false;
+  }
+
+  await replyWithFallback(ctx, "🔄 Restoring previous session after restart…");
+
+  const [success, message, windowName, newWindowId] = await tmuxManager.createWindow(cwd, {
+    resumeSessionId
+  });
+  if (!success || !newWindowId) {
+    await replyWithFallback(ctx, `❌ Failed to restore session: ${message}`);
+    return true;
+  }
+
+  // `--resume` is slower to emit its SessionStart than a fresh launch; give the
+  // hook extra time to register the new window before we bind + forward.
+  await sessionManager.waitForSessionMapEntry?.(newWindowId, 15);
+  sessionManager.bindThread!(userId, threadId, newWindowId, windowName);
+
+  // Drop the orphaned dead-window row we resumed away from. Guard the id-reuse
+  // case where a fresh tmux server handed us back the same id — deleting that
+  // would cascade away the session we just created.
+  if (staleWindowId && staleWindowId !== newWindowId) {
+    sessionManager.deleteWindow?.(staleWindowId);
+  }
+
+  options.bashCapture?.cancel(userId, threadId);
+  const [sent, sendMessage] = await sessionManager.sendToWindow(newWindowId, pendingText);
+  if (!sent) {
+    await replyWithFallback(ctx, `✅ Session restored, but forwarding your message failed: ${sendMessage}`);
+    return true;
+  }
+  if (pendingText.startsWith("!") && pendingText.length > 1) {
+    options.bashCapture?.start(userId, threadId, newWindowId, pendingText.slice(1));
+  }
+
+  sharedLogger().info(
+    { userId, threadId, newWindowId, resumeSessionId, cwd },
+    "lazy-resumed bound topic onto a fresh window after the old one vanished"
+  );
+  return true;
+}
+
+/**
+ * Fast-path lazy resume: the binding still points at a window id, but that
+ * window is dead in tmux (user messaged in the ~2s after a reboot, before
+ * statusPolling soft-deleted the binding). The sessions row hasn't been
+ * cascade-deleted yet, so cwd + session_id are still on it.
+ */
+async function tryResumeBoundWindow(
+  ctx: Pick<Context, "reply">,
+  userId: number,
+  threadId: number,
+  oldWindowId: string,
+  pendingText: string,
+  sessionManager: Pick<SessionManager, "getSessionByWindow" | "sendToWindow"> &
+    Partial<Pick<SessionManager, "bindThread" | "waitForSessionMapEntry" | "deleteWindow">>,
+  tmuxManager: Partial<Pick<TmuxManager, "createWindow">>,
+  options: BotHandlerOptions
+): Promise<boolean> {
+  const prior = sessionManager.getSessionByWindow(oldWindowId);
+  if (!prior?.cwd || !prior.session_id) return false;
+  return resumeOntoNewWindow(
+    ctx,
+    userId,
+    threadId,
+    prior.cwd,
+    prior.session_id,
+    pendingText,
+    sessionManager,
+    tmuxManager,
+    options,
+    oldWindowId
+  );
 }
 
 async function createAndBindWindow(

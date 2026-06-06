@@ -1,4 +1,4 @@
-import type Database from "better-sqlite3";
+import { dbTransaction, type SqliteDatabase } from "./db.js";
 import type { AgentType } from "./hookTypes.js";
 import { logger } from "./logger.js";
 
@@ -77,6 +77,11 @@ CREATE TABLE IF NOT EXISTS thread_bindings (
   -- /joined topic whose agent hasn't fired its first SessionStart yet has no
   -- session to anchor on.
   last_session_id        TEXT,
+  -- Companion anchor to last_session_id: the cwd the window ran in. The
+  -- sessions row (which also holds cwd) is FK-CASCADE-deleted when the window
+  -- is soft-cleaned, so without this the cwd is lost and lazy auto-resume on
+  -- the next message can't recreate the window. Written by registerSession.
+  last_cwd               TEXT,
   -- Set to 1 when the bound window vanished from tmux (statusPolling soft-
   -- delete path). The /join flow uses last_session_id to default-highlight
   -- the previous session in the resume picker; on a successful bindThread
@@ -108,11 +113,12 @@ export class SessionRegistry {
   // without leaving orphans. deleteWindow() clears the entry.
   private readonly lastEventByWindow = new Map<string, LastEventRecord>();
 
-  constructor(private readonly db: Database.Database) {
-    db.pragma("foreign_keys = ON");
+  constructor(private readonly db: SqliteDatabase) {
+    db.exec("PRAGMA foreign_keys = ON");
     db.exec(SCHEMA_SQL);
     this.migrateAddLastSessionId();
     this.migrateRecoveryShape();
+    this.migrateAddLastCwd();
     const existing = db
       .prepare("SELECT value FROM meta WHERE key = ?")
       .get("schema_version") as { value: string } | undefined;
@@ -135,6 +141,34 @@ export class SessionRegistry {
     logger().info(
       { table: "thread_bindings", column: "last_session_id" },
       "registry migration: added column"
+    );
+  }
+
+  // Same idempotent ADD COLUMN probe for last_cwd. Runs after migrateRecoveryShape
+  // so it also backfills the column onto any DB whose table was recreated before
+  // last_cwd existed in the recreate DDL.
+  private migrateAddLastCwd(): void {
+    const cols = this.db
+      .prepare("PRAGMA table_info(thread_bindings)")
+      .all() as Array<{ name: string }>;
+    if (cols.some((c) => c.name === "last_cwd")) return;
+    this.db.exec("ALTER TABLE thread_bindings ADD COLUMN last_cwd TEXT");
+    // Backfill from the live sessions row so topics already bound before this
+    // upgrade can lazy-resume on their FIRST reboot, without waiting for a fresh
+    // SessionStart to populate last_cwd. Only touches bindings whose window
+    // still has a sessions row (i.e. currently live at upgrade time).
+    this.db.exec(`
+      UPDATE thread_bindings
+         SET last_cwd = (
+           SELECT cwd FROM sessions WHERE sessions.window_id = thread_bindings.window_id
+         )
+       WHERE last_cwd IS NULL
+         AND window_id IS NOT NULL
+         AND EXISTS (SELECT 1 FROM sessions WHERE sessions.window_id = thread_bindings.window_id)
+    `);
+    logger().info(
+      { table: "thread_bindings", column: "last_cwd" },
+      "registry migration: added column (+ backfilled cwd from live sessions)"
     );
   }
 
@@ -171,7 +205,7 @@ export class SessionRegistry {
       windowFk.on_delete === "SET NULL";
     if (shapeOk) return;
 
-    const tx = this.db.transaction(() => {
+    const tx = dbTransaction(this.db, () => {
       // foreign_keys pragma is per-connection; we leave it ON because we
       // want the SELECT below to honour any orphans. The CREATE/INSERT/DROP/
       // RENAME sequence here doesn't touch FK rows, so this is safe.
@@ -184,6 +218,10 @@ export class SessionRegistry {
           topic_probe_message_id INTEGER,
           bound_at               INTEGER NOT NULL,
           last_session_id        TEXT,
+          -- last_cwd is intentionally NOT added here. migrateAddLastCwd (which
+          -- runs right after this) is the single point that adds it AND
+          -- backfills from live sessions; adding the column here would make that
+          -- migration's "column already exists?" probe skip the backfill.
           recovery_pending       INTEGER NOT NULL DEFAULT 0,
           PRIMARY KEY (user_id, thread_id),
           FOREIGN KEY (window_id) REFERENCES windows(window_id) ON DELETE SET NULL
@@ -247,13 +285,13 @@ export class SessionRegistry {
   listLiveWindows(): WindowRow[] {
     return this.db
       .prepare("SELECT window_id, display_name, cwd, created_at FROM windows ORDER BY window_id")
-      .all() as WindowRow[];
+      .all() as unknown as WindowRow[];
   }
 
   registerSession(args: RegisterSessionArgs): void {
     const startedAt = args.startedAt ?? Date.now();
     const lastByteOffset = args.lastByteOffset ?? 0;
-    const tx = this.db.transaction((a: RegisterSessionArgs) => {
+    const tx = dbTransaction(this.db, (a: RegisterSessionArgs) => {
       // Delete by BOTH keys before inserting. `session_id` is the PRIMARY
       // KEY, so deleting only by `window_id` leaves a PK violation when the
       // same session_id is still registered against a DIFFERENT window —
@@ -289,8 +327,8 @@ export class SessionRegistry {
       // tx as the sessions insert so DB observers can't see a half-applied
       // SessionStart.
       this.db
-        .prepare("UPDATE thread_bindings SET last_session_id = ? WHERE window_id = ?")
-        .run(a.sessionId, a.windowId);
+        .prepare("UPDATE thread_bindings SET last_session_id = ?, last_cwd = ? WHERE window_id = ?")
+        .run(a.sessionId, a.cwd, a.windowId);
     });
     tx(args);
   }
@@ -314,7 +352,7 @@ export class SessionRegistry {
   }
 
   allLiveSessions(): SessionRow[] {
-    return this.db.prepare("SELECT * FROM sessions").all() as SessionRow[];
+    return this.db.prepare("SELECT * FROM sessions").all() as unknown as SessionRow[];
   }
 
   setOffset(sessionId: string, offset: number): void {
@@ -356,15 +394,49 @@ export class SessionRegistry {
   // remains available to the /join resume picker; just null out window_id
   // and flip recovery_pending. After the user re-/joins, bindThread will
   // clear the flag via the ON CONFLICT update path.
-  markBindingForRecovery(userId: number, threadId: number): void {
+  // `expectedWindowId` guards against a race: lazy auto-resume may have already
+  // rebound this topic onto a fresh live window between statusPolling reading
+  // the (dead) binding and calling this. Only soft-delete the row if it still
+  // references the window we observed dead — otherwise we'd null out a binding
+  // that was just successfully resumed.
+  markBindingForRecovery(userId: number, threadId: number, expectedWindowId?: string): void {
+    if (expectedWindowId === undefined) {
+      this.db
+        .prepare(
+          `UPDATE thread_bindings
+              SET window_id = NULL, recovery_pending = 1
+            WHERE user_id = ? AND thread_id = ?`
+        )
+        .run(userId, threadId);
+      return;
+    }
     this.db
       .prepare(
         `UPDATE thread_bindings
-            SET window_id = NULL,
-                recovery_pending = 1
-          WHERE user_id = ? AND thread_id = ?`
+            SET window_id = NULL, recovery_pending = 1
+          WHERE user_id = ? AND thread_id = ? AND window_id = ?`
       )
-      .run(userId, threadId);
+      .run(userId, threadId, expectedWindowId);
+  }
+
+  // Lazy auto-resume feed: for a topic in recovery_pending state, return both
+  // anchors needed to recreate its window with `--resume` — the last session_id
+  // and the cwd it ran in. Returns null unless BOTH are present (a binding whose
+  // agent never fired a SessionStart has neither). cwd survives here even though
+  // the sessions row was FK-cascade-deleted, because registerSession copies it
+  // onto the binding as last_cwd.
+  getRecoveryInfo(userId: number, threadId: number): { sessionId: string; cwd: string } | null {
+    const row = this.db
+      .prepare(
+        `SELECT last_session_id, last_cwd
+           FROM thread_bindings
+          WHERE user_id = ? AND thread_id = ? AND recovery_pending = 1`
+      )
+      .get(userId, threadId) as
+      | { last_session_id: string | null; last_cwd: string | null }
+      | undefined;
+    if (!row?.last_session_id || !row.last_cwd) return null;
+    return { sessionId: row.last_session_id, cwd: row.last_cwd };
   }
 
   // Resume picker default-highlight feed. Returns the anchor only if the

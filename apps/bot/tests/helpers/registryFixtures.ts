@@ -1,10 +1,10 @@
 // apps/bot/tests/helpers/registryFixtures.ts
-import Database from "better-sqlite3";
+import { openDatabase, type SqliteDatabase } from "../../src/agent-connect/db.js";
 
-export function inMemoryDb(): Database.Database {
-  const db = new Database(":memory:");
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("synchronous = NORMAL");
+export function inMemoryDb(): SqliteDatabase {
+  const db = openDatabase(":memory:");
+  db.exec("PRAGMA journal_mode = WAL");
+  db.exec("PRAGMA foreign_keys = ON");
+  db.exec("PRAGMA synchronous = NORMAL");
   return db;
 }

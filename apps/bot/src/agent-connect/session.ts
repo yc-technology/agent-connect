@@ -72,13 +72,19 @@ export interface SessionRegistryLike {
     transcript_path?: string;
     last_byte_offset?: number;
     source?: string | null;
+    // cwd is needed by the lazy auto-resume path (bot.ts tryResumeBoundWindow):
+    // after a reboot the sessions row is the only surviving source of the
+    // working directory to recreate the tmux window in.
+    cwd?: string;
   } | null;
   getLastEvent(windowId: string): { event: string; at: number } | null;
   upsertWindow(windowId: string, displayName: string, cwd: string): void;
+  deleteWindow(windowId: string): void;
   bindThread(userId: number, threadId: number, windowId: string): void;
   unbindThread(userId: number, threadId: number): string | null;
-  markBindingForRecovery(userId: number, threadId: number): void;
+  markBindingForRecovery(userId: number, threadId: number, expectedWindowId?: string): void;
   getRecoveryAnchor?(userId: number, threadId: number): string | null;
+  getRecoveryInfo?(userId: number, threadId: number): { sessionId: string; cwd: string } | null;
   setGroupChatId(userId: number, threadId: number, chatId: number): void;
 }
 
@@ -273,6 +279,16 @@ export class SessionManager {
             if (newId) {
               newBindings[tid] = newId;
               this.windowDisplayNames[newId] = display;
+            } else {
+              // Window is gone and can't be remapped by name — e.g. the tmux
+              // server was restarted and only __main__ survives. Do NOT drop the
+              // binding: keep it pointing at the stale id so statusPolling's
+              // authoritative soft-delete flips it to recovery_pending (preserving
+              // the last_session_id / last_cwd anchor) and lazy auto-resume can
+              // fire on the next message. Dropping it here silently bypassed the
+              // entire recovery path — the binding became neither live nor
+              // recoverable, so the user just got the directory picker.
+              newBindings[tid] = value;
             }
             changed = true;
           }
@@ -281,6 +297,10 @@ export class SessionManager {
           if (newId) {
             newBindings[tid] = newId;
             this.windowDisplayNames[newId] = value;
+          } else {
+            // Same rationale: preserve an unmappable binding for the recovery
+            // path instead of silently dropping it.
+            newBindings[tid] = value;
           }
           changed = true;
         }
@@ -479,6 +499,17 @@ export class SessionManager {
     this.saveState();
   }
 
+  // Remove a window row (FK-CASCADE clears its sessions / offsets; FK SET NULL
+  // detaches any binding still referencing it). Used to clean up the dead window
+  // a lazy-resume just replaced. Also drops the in-memory mirror entries so they
+  // don't linger for a window id that no longer exists.
+  deleteWindow(windowId: string): void {
+    this.options.registry?.deleteWindow(windowId);
+    delete this.windowDisplayNames[windowId];
+    delete this.windowStates[windowId];
+    this.saveState();
+  }
+
   encodeCwd(cwd: string): string {
     return cwd.replace(/[^a-zA-Z0-9-]/g, "-");
   }
@@ -665,7 +696,10 @@ export class SessionManager {
     const windowId = bindings[threadId] ?? null;
     delete bindings[threadId];
     if (Object.keys(bindings).length === 0) delete this.threadBindings[userId];
-    this.options.registry?.markBindingForRecovery(userId, threadId);
+    // Pass the window we observed so the registry only soft-deletes the row if
+    // it still references it — a concurrent lazy-resume may have already rebound
+    // this topic onto a fresh window.
+    this.options.registry?.markBindingForRecovery(userId, threadId, windowId ?? undefined);
     this.saveState();
     logger().info(
       { userId, threadId, windowId },
@@ -689,6 +723,11 @@ export class SessionManager {
   // re-attached yet). Returns null once they re-/join.
   getRecoveryAnchor(userId: number, threadId: number): string | null {
     return this.options.registry?.getRecoveryAnchor?.(userId, threadId) ?? null;
+  }
+
+  // Lazy auto-resume anchors (session_id + cwd) for a recovery_pending topic.
+  getRecoveryInfo(userId: number, threadId: number): { sessionId: string; cwd: string } | null {
+    return this.options.registry?.getRecoveryInfo?.(userId, threadId) ?? null;
   }
 
   *iterThreadBindings(): IterableIterator<[number, number, string]> {

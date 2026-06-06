@@ -1,9 +1,9 @@
 import { join } from "node:path";
-import Database from "better-sqlite3";
 import type { Bot } from "grammy";
 import { BashCaptureManager } from "./bashCapture.js";
 import { registerBotHandlers, setupBotCommandsIfPossible } from "./bot.js";
 import { Config } from "./config.js";
+import { openDatabase, type SqliteDatabase } from "./db.js";
 import type { BotConfigRecord } from "./botConfig.js";
 import type { SqliteConfigStore } from "./configStore.js";
 import { drainTranscript, type Dispatcher, type NewMessageLike } from "./drainTranscript.js";
@@ -27,7 +27,7 @@ export interface BotRuntimeInstance {
   bot: Bot;
   hookRouter: HookRouter;
   registry: SessionRegistry;
-  db: Database.Database;
+  db: SqliteDatabase;
   statusPoller: StatusPoller;
   bashCapture: BashCaptureManager;
 }
@@ -138,7 +138,7 @@ export class MultiBotRuntimeManager {
 
       const botDir = config.configDir;
       await migrateJsonToSqliteIfNeeded(botDir, config.tmuxSessionName, config.agentType);
-      const db = new Database(join(botDir, "bot.sqlite"));
+      const db = openDatabase(join(botDir, "bot.sqlite"));
       const registry = new SessionRegistry(db);
 
       const sessionManager = new SessionManager({ config, tmuxManager, registry });

@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile, rename, rm } from "node:fs/promises";
 import { join } from "node:path";
-import Database from "better-sqlite3";
+import { dbTransaction, openDatabase } from "./db.js";
 import { logger } from "./logger.js";
 import { SessionRegistry } from "./sessionRegistry.js";
 import type { AgentType } from "./hookTypes.js";
@@ -57,7 +57,7 @@ export async function migrateJsonToSqliteIfNeeded(
   const hasAnyJson =
     existsSync(stateFile) || existsSync(sessionMapFile) || existsSync(monitorStateFile);
 
-  const db = new Database(dbPath);
+  const db = openDatabase(dbPath);
   const registry = new SessionRegistry(db);
 
   if (!hasAnyJson) {
@@ -70,7 +70,7 @@ export async function migrateJsonToSqliteIfNeeded(
   const monitorState = (await readJsonOrNull<MonitorStateJson>(monitorStateFile)) ?? {};
 
   const prefix = `${tmuxSessionName}:`;
-  const tx = db.transaction(() => {
+  const tx = dbTransaction(db, () => {
     const displayNames = state.window_display_names ?? {};
     for (const [windowId, name] of Object.entries(displayNames)) {
       if (!windowId.startsWith("@")) continue;

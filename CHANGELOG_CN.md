@@ -9,6 +9,46 @@ English: [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## 0.4.0 — 2026-06-06
+
+熬过一次关机重启，顺手摆脱 ABI 脆弱性。
+
+### ✨ 新增 — `agc autostart`（macOS launchd）
+
+`agc autostart` 装一个 LaunchAgent（`com.yc-tech.agent-connect`），登录时
+自动起 daemon；`agc autostart status` / `agc autostart remove` 管理它。
+**点火即止**的设计：`RunAtLoad=true`、`KeepAlive=false`——launchd 只点一次
+火跑 `agc start --daemon`，后续保活归我们自己的 supervisor（让 launchd 也
+KeepAlive 会和反双启动 tcpProbe 打架成循环）。plist 给 `PATH` 补上 Homebrew
+（launchd 默认 PATH 没有，而 bot 要 shell out 调 `tmux`），并透传安装时的
+`AGENT_CONNECT_*` 环境。请用 `agc upgrade` 之后的**全局** `agc` 来装。
+配合开机自动登录，重启后服务零操作自动回来。
+
+### ✨ 新增 — 重启后懒恢复会话
+
+重启会杀掉 tmux server 和所有 agent 进程,但 topic ↔ session 绑定在 SQLite
+里活着。现在你在原来绑过的 topic 发第一条消息,会自动用 `claude --resume`
+重建窗口并转发消息——不弹目录选择器。resume 锚点(`last_session_id` +
+`last_cwd`)存在**绑定行本身**上,所以能熬过 statusPolling 的软删除(软删除
+会 FK 级联删掉 `sessions` 行)。升级时会从活着的 session 给已有绑定回填
+`last_cwd`。
+
+这同时修了一个长期 bug:`resolveStaleIds` 之前会**静默丢弃**那些窗口消失、
+又没法按名字重映射的内存绑定(tmux server 重启的场景)。那等于完全绕过了
+恢复路径——`recovery_pending` 永远没被置上,topic 既不活也不可恢复,你就
+永远拿到选择器。现在这类绑定会被保留,交给 statusPolling 软删除进恢复态。
+
+### 🔧 变更 — SQLite 改用内置 `node:sqlite`(无原生插件)
+
+把原生 `better-sqlite3` 插件换成 Node 内置的 `node:sqlite`。
+`better-sqlite3` 的二进制和安装时的 Node 版本 ABI 绑定;装完之后再换 Node
+(比如用 nvm)会让已装的 daemon 在 `ERR_DLOPEN_FAILED: NODE_MODULE_VERSION
+mismatch` 上崩溃循环。`node:sqlite` 随运行时一起发,从根上不可能 ABI 不匹配。
+无 schema、无数据变更——现有 `bot.sqlite` / `agent-connect.sqlite` 原样打开。
+**要求 Node >= 22.5**(已写进 `engines`)。
+
+---
+
 ## 0.3.18 — 2026-06-01
 
 ### 🐛 修复 — interactive picker 闪烁(消失又出现),多选最明显

@@ -426,6 +426,7 @@ describe("SessionManager registry dual-write", () => {
       upsertWindow: (windowId: string, displayName: string, cwd: string) => {
         upserts.push([windowId, displayName, cwd]);
       },
+      deleteWindow: () => {},
       bindThread: (userId: number, threadId: number, windowId: string) => {
         binds.push([userId, threadId, windowId]);
       },
@@ -580,6 +581,28 @@ describe("SessionManager registry dual-write", () => {
       };
       expect(() => mgr.hydrateFromRegistry(registry)).not.toThrow();
       expect(mgr.getWindowForThread(100, 42)).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolveStaleIds keeps a binding whose window vanished and can't be remapped (tmux server restart)", async () => {
+    // Regression: after a tmux server restart only __main__ survives, so a dead
+    // window can't be remapped by name. resolveStaleIds used to DROP such
+    // bindings from memory — silently bypassing the whole recovery path, so
+    // statusPolling never soft-deleted them, recovery_pending was never set, and
+    // the user got the directory picker instead of auto-resume. It must keep the
+    // binding (pointing at the stale id) so statusPolling can soft-delete it into
+    // recovery_pending and lazy resume can fire.
+    const dir = tmpDir();
+    try {
+      const mgr = makeManager(dir); // no tmuxManager → resolveStaleIds sees no live windows
+      mgr.bindThread(7, 42, "@7", "myproj");
+      expect(mgr.getWindowForThread(7, 42)).toBe("@7");
+
+      await mgr.resolveStaleIds();
+
+      expect(mgr.getWindowForThread(7, 42)).toBe("@7");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

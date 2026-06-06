@@ -5,6 +5,11 @@ import { resolve as resolvePath, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runHookClient } from "@yc-tech/agent-connect-bot/hookClient";
 import { installAllHooks } from "@yc-tech/agent-connect-bot/hookInstaller";
+import {
+  autostartStatus,
+  installAutostart,
+  uninstallAutostart
+} from "@yc-tech/agent-connect-bot/autostart";
 import { runBotService } from "@yc-tech/agent-connect-bot/service";
 import { runSupervisor } from "@yc-tech/agent-connect-bot/supervisor";
 import {
@@ -40,6 +45,11 @@ Daemon (supervised, auto-restart):
   agc upgrade            Self-upgrade: stop → npm i -g @yc-tech/agent-connect-cli@latest → restart
   agc upgrade --tag X    Install dist-tag X instead of latest (e.g. \`beta\`)
   agc supervise          (internal) the supervisor entrypoint — not for direct use
+
+Auto-start at login (macOS launchd):
+  agc autostart          Install a LaunchAgent so the daemon starts at login
+  agc autostart status   Show whether auto-start is installed/loaded
+  agc autostart remove   Remove the LaunchAgent (running daemon left untouched)
 
 Hooks:
   agc hook               Run the agent hook handler (called by Claude/Codex)
@@ -697,6 +707,31 @@ async function upgrade(opts: { tag?: string } = {}): Promise<number> {
   return 0;
 }
 
+async function runAutostart(rest: string[]): Promise<number> {
+  const sub = rest[0] ?? "install";
+  if (sub === "status") {
+    const result = await autostartStatus();
+    process.stdout.write(`${result.message}\n`);
+    return result.ok ? 0 : 1;
+  }
+  if (sub === "remove" || sub === "uninstall") {
+    const result = await uninstallAutostart();
+    process.stdout.write(`${result.message}\n`);
+    return result.ok ? 0 : 1;
+  }
+  if (sub === "install") {
+    // process.argv[1] is the resolved agc entry script; process.execPath is
+    // the node binary. Both are absolute, which is what launchd needs (it has
+    // no PATH resolution for ProgramArguments[0]).
+    const cliEntry = resolvePath(process.argv[1] ?? fileURLToPath(import.meta.url));
+    const result = await installAutostart({ nodePath: process.execPath, cliEntry });
+    process.stdout.write(`${result.message}\n`);
+    return result.ok ? 0 : 1;
+  }
+  process.stderr.write(`Unknown autostart subcommand: ${sub}\nUse: agc autostart [status|remove]\n`);
+  return 1;
+}
+
 async function main(argv = process.argv.slice(2)): Promise<number> {
   const command = argv[0] ?? "start";
 
@@ -745,6 +780,7 @@ async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     return upgrade(tag !== undefined ? { tag } : {});
   }
+  if (command === "autostart") return runAutostart(argv.slice(1));
 
   process.stderr.write(`Unknown command: ${command}\n\n${HELP_TEXT}`);
   return 1;

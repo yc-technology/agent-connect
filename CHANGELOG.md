@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.4.0 — 2026-06-06
+
+Survive a machine reboot, and stop being ABI-fragile.
+
+### ✨ Added — `agc autostart` (macOS launchd)
+
+`agc autostart` installs a LaunchAgent (`com.yc-tech.agent-connect`) that
+starts the daemon at login; `agc autostart status` / `agc autostart remove`
+manage it. **Ignition-only** by design: `RunAtLoad=true`, `KeepAlive=false`,
+so launchd fires `agc start --daemon` once and our supervisor keeps it alive
+(letting launchd KeepAlive it too would fight the anti-double-start tcpProbe
+and loop). The plist augments `PATH` with Homebrew (launchd's default PATH
+lacks it, and the bot shells out to `tmux`) and propagates the installer's
+`AGENT_CONNECT_*` env. Install with the **global** `agc` after `agc upgrade`.
+With auto-login enabled, a reboot brings the service back with zero touches.
+
+### ✨ Added — lazy session recovery after a reboot
+
+A reboot kills the tmux server and every agent process, but the topic ↔
+session bindings survive in SQLite. Now the first message in a previously-bound
+topic transparently recreates its window with `claude --resume` and forwards
+the message — no directory picker. The resume anchors (`last_session_id` +
+`last_cwd`) live on the binding itself, so they survive statusPolling's
+soft-delete (which FK-cascade-deletes the `sessions` row). Existing bindings
+get `last_cwd` backfilled from their live session on upgrade.
+
+This also fixes a long-standing bug where `resolveStaleIds` **silently dropped**
+in-memory bindings whose window vanished and couldn't be remapped by name (the
+tmux server-restart case). That bypassed the recovery path entirely —
+`recovery_pending` was never set, so the topic was neither live nor recoverable
+and you always got the picker. Such bindings are now preserved for statusPolling
+to soft-delete into recovery state.
+
+### 🔧 Changed — SQLite via built-in `node:sqlite` (no native addon)
+
+Replaced the native `better-sqlite3` addon with Node's built-in `node:sqlite`.
+`better-sqlite3` is ABI-bound to the Node version present at install time;
+switching Node (e.g. via nvm) afterward made the installed daemon crash-loop on
+`ERR_DLOPEN_FAILED: NODE_MODULE_VERSION mismatch`. `node:sqlite` ships inside
+the runtime, so that mismatch is impossible by construction. No schema or data
+changes — existing `bot.sqlite` / `agent-connect.sqlite` open as-is.
+**Requires Node >= 22.5** (now declared in `engines`).
+
+---
+
 ## 0.3.18 — 2026-06-01
 
 ### 🐛 Fixed — interactive picker flicker (disappears/reappears), worst on multi-select

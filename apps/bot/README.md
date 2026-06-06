@@ -39,9 +39,10 @@ See the [main README](https://github.com/yc-technology/agent-connect#readme) for
 
 ## Requirements
 
-- Node.js >= 22
+- Node.js >= 22.5 (SQLite is the built-in `node:sqlite`, so there's no native
+  SQLite addon to compile or keep ABI-matched across Node upgrades)
 - `tmux` available on `$PATH`
-- Native deps: `better-sqlite3` (prebuilt binaries for most platforms) and `sharp`
+- Native deps: `sharp` (image handling)
 
 ## License
 
