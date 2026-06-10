@@ -364,6 +364,18 @@ them when refactoring.
 - **`UI_PATTERNS` scan is bottom-up.** `capturePane` includes 200
   lines of scrollback, so the LATEST occurrence of an interactive UI
   must win — top-down would lock onto a stale picker scrolled above.
+- **Inbound messages are guarded against active TUI pickers.** With a
+  mirrored picker open (`interactiveModes`), plain text sendKeys'd into
+  the pane is swallowed as picker keystrokes and its trailing Enter
+  confirms the highlighted item (June-10 incident: a message sent while
+  the `/model` picker was open silently selected a model and the text
+  vanished; permission prompts are worse — leaked `y`/digits
+  self-approve). `textMessageHandler` / `photoMessageHandler` re-verify
+  with a fresh `capturePane` + `isInteractiveUi` (the mode entry can lag
+  one poll tick), then refuse with guidance. A leading `>` is the
+  explicit passthrough: types the rest into the picker WITHOUT Enter
+  (for AskUserQuestion "Other" fields / filter typing); the user
+  confirms via the ⏎ button.
 
 ## Testing & runtime patterns
 

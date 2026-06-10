@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.4.1 — 2026-06-10
+
+### 🐛 Fixed — inbound messages no longer get eaten by open TUI pickers
+
+With an interactive picker open in the pane (`/model`, `AskUserQuestion`,
+permission prompts…), a message sent from Telegram used to be sendKeys'd
+straight into the picker — the text was swallowed as keystrokes and the
+trailing Enter confirmed whatever item was highlighted. Real incident: a
+message sent while the `/model` picker was open silently selected a model
+and the text vanished without a reply. Permission prompts were worse —
+leaked `y`/digit keys could self-approve an action.
+
+The bot now refuses plain text (and photos) while a mirrored picker is
+verified open — your message stays in Telegram with a clear notice instead
+of disappearing. A fresh `capturePane` re-check before blocking avoids
+false rejections when the picker state is up to one poll tick stale.
+
+To intentionally type into a picker (the `AskUserQuestion` "Other" field,
+`/model`'s filter), prefix the message with `>` — the rest is typed into
+the pane **without** Enter, and you confirm with the picker's ⏎ button, so
+nothing can auto-select.
+
 ## 0.4.0 — 2026-06-06
 
 Survive a machine reboot, and stop being ABI-fragile.

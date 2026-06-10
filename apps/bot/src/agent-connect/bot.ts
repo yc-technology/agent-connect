@@ -52,7 +52,7 @@ import {
 } from "./directoryBrowser.js";
 import { buildHistoryPage, parseHistoryCallbackData, sendHistory } from "./history.js";
 import { logger as sharedLogger } from "./logger.js";
-import { clearInteractiveMessage, handleInteractiveUi } from "./interactiveUi.js";
+import { clearInteractiveMessage, getInteractiveWindow, handleInteractiveUi } from "./interactiveUi.js";
 import {
   editTextWithFallback,
   replyWithFallback,
@@ -62,7 +62,7 @@ import {
 import type { MessageQueueManager } from "./messageQueue.js";
 import { textToImage } from "./screenshot.js";
 import type { ClaudeSession, SessionManager } from "./session.js";
-import { parseStatusLine, parseUsageOutput } from "./terminalParser.js";
+import { isInteractiveUi, parseStatusLine, parseUsageOutput } from "./terminalParser.js";
 import { createGrammyBot } from "./telegramClient.js";
 import { isForumThreadId, PRIVATE_CHAT_THREAD_ID } from "./telegramThread.js";
 import type { TmuxManager } from "./tmuxManager.js";
@@ -664,7 +664,7 @@ export async function textMessageHandler(
       >
     >,
   tmuxManager: Pick<TmuxManager, "listWindows" | "findWindowById"> &
-    Partial<Pick<TmuxManager, "createWindow">>,
+    Partial<Pick<TmuxManager, "createWindow" | "capturePane" | "sendKeys">>,
   stateStore = defaultBotState,
   options: BotHandlerOptions = {}
 ): Promise<void> {
@@ -808,6 +808,36 @@ export async function textMessageHandler(
     return;
   }
 
+  // A TUI picker (/model, AskUserQuestion, a permission prompt…) mirrored to
+  // Telegram is open in this pane. Plain text sendKeys'd now is swallowed by
+  // the picker as keystrokes — and the trailing Enter confirms whatever item
+  // is highlighted (a /model picker once auto-selected a model this way while
+  // the user's message vanished). Worse, permission prompts react to bare
+  // y/n/digit keys, so leaked text can self-approve an action. Re-verify
+  // against a fresh capture first: interactiveModes can lag one status-poll
+  // tick behind the pane, and blocking on stale state would reject a
+  // perfectly deliverable message.
+  if (getInteractiveWindow(userId, threadId) === boundWindowId && tmuxManager.capturePane) {
+    const paneText = await tmuxManager.capturePane(boundWindowId);
+    if (paneText && isInteractiveUi(paneText)) {
+      // Escape hatch for pickers that legitimately take typed input (the
+      // AskUserQuestion "Other" field, /model's filter): a leading ">" types
+      // the rest into the pane WITHOUT Enter, so nothing auto-confirms; the
+      // user finishes with the ⏎ button on the picker keyboard.
+      const passthrough = ctx.msg.text.startsWith(">") ? ctx.msg.text.slice(1).replace(/^ /, "") : "";
+      if (passthrough && tmuxManager.sendKeys) {
+        await tmuxManager.sendKeys(boundWindowId, passthrough, { enter: false, literal: true });
+        await replyWithFallback(ctx, "⌨️ Typed into the picker (no Enter). Tap ⏎ above to confirm, or Esc to cancel.");
+        return;
+      }
+      await replyWithFallback(
+        ctx,
+        '⚠️ An interactive picker is open in the terminal — message not sent (the picker would swallow it as keystrokes). Use the buttons above to answer or dismiss it, or resend starting with ">" to type into the picker.'
+      );
+      return;
+    }
+  }
+
   options.bashCapture?.cancel(userId, threadId);
   const [success, message] = await sessionManager.sendToWindow(boundWindowId, ctx.msg.text);
   if (!success) {
@@ -828,7 +858,7 @@ export async function photoMessageHandler(
     "setGroupChatId" | "getWindowForThread" | "getDisplayName" | "unbindThread" | "sendToWindow"
   > &
     Partial<Pick<SessionManager, "setTopicProbeMessageId">>,
-  tmuxManager: Pick<TmuxManager, "findWindowById">,
+  tmuxManager: Pick<TmuxManager, "findWindowById"> & Partial<Pick<TmuxManager, "capturePane">>,
   options: PhotoHandlerOptions = {}
 ): Promise<void> {
   if (!isUserAllowed(ctx.from?.id, config)) {
@@ -863,6 +893,21 @@ export async function photoMessageHandler(
     sessionManager.unbindThread(userId, threadId);
     await replyWithFallback(ctx, `❌ Window '${display}' no longer exists. Binding removed.\nSend a message to start a new session.`);
     return;
+  }
+
+  // Same guard as textMessageHandler: with a TUI picker open, the
+  // "(image attached: …)" text would be swallowed as picker keystrokes and
+  // its Enter would confirm the highlighted item. No passthrough for photos —
+  // there's no sensible way to type an image path into a picker field.
+  if (getInteractiveWindow(userId, threadId) === windowId && tmuxManager.capturePane) {
+    const paneText = await tmuxManager.capturePane(windowId);
+    if (paneText && isInteractiveUi(paneText)) {
+      await replyWithFallback(
+        ctx,
+        "⚠️ An interactive picker is open in the terminal — image not sent. Use the buttons above to answer or dismiss it, then resend."
+      );
+      return;
+    }
   }
 
   const photo = photos[photos.length - 1]!;

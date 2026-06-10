@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BOT_COMMANDS,
   BotStateStore,
@@ -27,6 +27,7 @@ import {
   unsupportedContentHandler,
   usageCommand
 } from "../src/agent-connect/bot.js";
+import { resetInteractiveState, setInteractiveMode } from "../src/agent-connect/interactiveUi.js";
 import { WindowState, type HistoryMessage } from "../src/agent-connect/session.js";
 import { installCaptureLogger } from "./helpers/testLogger.js";
 
@@ -1355,5 +1356,154 @@ describe("bot text and picker flow", () => {
     // topic was bound and the pending text was forwarded.
     expect(bindThread).toHaveBeenCalledWith(12345, 42, "@9", "project");
     expect(sendToWindow).toHaveBeenCalledWith("@9", "continue");
+  });
+});
+
+describe("interactive picker guard on inbound messages", () => {
+  // A real incident: a message sent while the /model picker was open got
+  // sendKeys'd into the picker — the text was swallowed as filter keystrokes
+  // and the trailing Enter confirmed the highlighted entry (silently
+  // switching models). The guard blocks plain text while a mirrored TUI
+  // picker is active, with a ">" prefix as explicit type-into-picker
+  // passthrough (no Enter).
+  const PICKER_PANE = [
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   2. No",
+    " Esc to cancel"
+  ].join("\n");
+  const IDLE_PANE = "❯ \n  ⏵⏵ bypass permissions on";
+
+  afterEach(() => {
+    resetInteractiveState();
+  });
+
+  function boundSessionManager(sendToWindow = vi.fn(async () => [true, "Sent"] as [boolean, string])) {
+    return {
+      sendToWindow,
+      manager: {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => "@5",
+        iterThreadBindings: function* (): IterableIterator<[number, number, string]> {},
+        getDisplayName: () => "project",
+        unbindThread: vi.fn(),
+        sendToWindow,
+        getSessionByWindow: vi.fn(() => null)
+      }
+    };
+  }
+
+  function ctxWithText(text: string) {
+    return {
+      from: { id: 12345 } as never,
+      msg: { message_id: 777, message_thread_id: 42, text } as never,
+      chat: { id: -100, type: "supergroup" } as never,
+      reply: vi.fn() as never
+    };
+  }
+
+  it("blocks plain text while a TUI picker is active and verified by fresh capture", async () => {
+    setInteractiveMode(12345, "@5", 42);
+    const { sendToWindow, manager } = boundSessionManager();
+    const ctx = ctxWithText("hello there");
+
+    await textMessageHandler(ctx, config, manager, {
+      listWindows: vi.fn(async () => []),
+      findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+      capturePane: vi.fn(async () => PICKER_PANE),
+      sendKeys: vi.fn()
+    });
+
+    expect(sendToWindow).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(
+      expect.stringContaining("interactive picker is open"),
+      expect.anything()
+    );
+  });
+
+  it("falls through and delivers normally when the picker state is stale (pane no longer interactive)", async () => {
+    setInteractiveMode(12345, "@5", 42);
+    const { sendToWindow, manager } = boundSessionManager();
+    const ctx = ctxWithText("hello there");
+
+    await textMessageHandler(ctx, config, manager, {
+      listWindows: vi.fn(async () => []),
+      findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+      capturePane: vi.fn(async () => IDLE_PANE),
+      sendKeys: vi.fn()
+    });
+
+    expect(sendToWindow).toHaveBeenCalledWith("@5", "hello there");
+  });
+
+  it('types ">"-prefixed text into the picker without Enter instead of blocking', async () => {
+    setInteractiveMode(12345, "@5", 42);
+    const { sendToWindow, manager } = boundSessionManager();
+    const sendKeys = vi.fn(async () => true);
+    const ctx = ctxWithText("> custom answer");
+
+    await textMessageHandler(ctx, config, manager, {
+      listWindows: vi.fn(async () => []),
+      findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+      capturePane: vi.fn(async () => PICKER_PANE),
+      sendKeys
+    });
+
+    expect(sendKeys).toHaveBeenCalledWith("@5", "custom answer", { enter: false, literal: true });
+    expect(sendToWindow).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Typed into the picker"), expect.anything());
+  });
+
+  it("does not consult tmux at all when no picker is tracked for the topic", async () => {
+    const { sendToWindow, manager } = boundSessionManager();
+    const capturePane = vi.fn();
+    const ctx = ctxWithText("hello there");
+
+    await textMessageHandler(ctx, config, manager, {
+      listWindows: vi.fn(async () => []),
+      findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+      capturePane,
+      sendKeys: vi.fn()
+    });
+
+    expect(capturePane).not.toHaveBeenCalled();
+    expect(sendToWindow).toHaveBeenCalledWith("@5", "hello there");
+  });
+
+  it("blocks photos while a TUI picker is active", async () => {
+    setInteractiveMode(12345, "@5", 42);
+    const reply = vi.fn();
+    const downloadPhoto = vi.fn();
+    const sendToWindow = vi.fn();
+
+    await photoMessageHandler(
+      {
+        from: { id: 12345 },
+        msg: {
+          message_thread_id: 42,
+          photo: [{ file_id: "large", file_unique_id: "unique:large" }]
+        },
+        chat: { id: -100, type: "supergroup" },
+        api: { getFile: vi.fn() },
+        reply
+      } as never,
+      { ...config, telegramBotToken: "token", configDir: "/tmp/agent-connect" },
+      {
+        setGroupChatId: vi.fn(),
+        getWindowForThread: () => "@5",
+        getDisplayName: () => "project",
+        unbindThread: vi.fn(),
+        sendToWindow
+      },
+      {
+        findWindowById: vi.fn(async () => ({ windowId: "@5", windowName: "project", cwd: "/tmp", paneCurrentCommand: "" })),
+        capturePane: vi.fn(async () => PICKER_PANE)
+      },
+      { imagesDir: "/tmp/images", downloadPhoto }
+    );
+
+    expect(downloadPhoto).not.toHaveBeenCalled();
+    expect(sendToWindow).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalledWith(expect.stringContaining("image not sent"), expect.anything());
   });
 });
