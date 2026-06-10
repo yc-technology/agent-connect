@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.4.2 — 2026-06-10
+
+### 🐛 Fixed — picker guard no longer loses the race against fast senders
+
+0.4.1's guard had a hole: it only engaged once statusPolling had recorded
+the picker as open (`interactiveModes`), and that flag is written up to one
+poll tick (~2s) **after** the picker renders. Sending `/model` and your
+next sentence back-to-back put the sentence inside that window — the guard
+skipped, the picker swallowed the text, and the trailing Enter confirmed
+the highlighted model. Same incident as 0.4.1 fixed, one street over.
+
+The guard now decides on a **fresh `capturePane` for every inbound
+message** and never consults the flag — a picker that rendered one
+millisecond ago is already caught. Costs one tmux capture (~10 ms) per
+message. The verbatim `/model` picker chrome is also pinned as a parser
+test fixture, so a future Claude Code UI change breaks the test suite
+instead of silently disabling the guard.
+
 ## 0.4.1 — 2026-06-10
 
 ### 🐛 Fixed — inbound messages no longer get eaten by open TUI pickers

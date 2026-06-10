@@ -211,6 +211,31 @@ describe("interactive UI extraction", () => {
     expect(result?.content).toContain("Sonnet");
   });
 
+  it("extracts the Claude Code 2.x /model picker (verbatim 2026-06 capture)", () => {
+    // Pinned from a live pane. This exact picker swallowed user messages
+    // twice (text became keystrokes, Enter confirmed the highlighted model),
+    // so the inbound-message guard depends on this UI staying detectable.
+    // If a Claude Code update changes the chrome and this test fails, update
+    // the Settings pattern in UI_PATTERNS — do not delete the test.
+    const result = extractInteractiveContent(
+      "❯ /model\n" +
+        "────────────────────────\n" +
+        "  Select model\n" +
+        "  Switch between Claude models. Your pick becomes the default for new sessions. For other/previous\n" +
+        "  model names, specify with --model.\n" +
+        "    1. Default (recommended)  Sonnet 4.6 · Efficient for routine tasks\n" +
+        "    2. Sonnet (1M context)    Sonnet 4.6 with 1M context · Draws from usage credits\n" +
+        "  ❯ 3. Fable ✔                Fable 5 · Most capable for your hardest and longest-running tasks\n" +
+        "    4. Opus                   Opus 4.8 · Best for everyday, complex tasks\n" +
+        "    5. Haiku                  Haiku 4.5 · Fastest for quick answers\n" +
+        "  ● High effort (default) ←/→ to adjust\n" +
+        "  Use /fast to turn on Fast mode (Opus 4.8).\n" +
+        "  Enter to set as default · s to use this session only · Esc to cancel\n"
+    );
+    expect(result?.name).toBe("Settings");
+    expect(result?.content).toContain("Fable");
+  });
+
   it("returns null for normal pane", () => {
     expect(extractInteractiveContent("$ echo hello\nhello\n$\n")).toBeNull();
     expect(isInteractiveUi("")).toBe(false);

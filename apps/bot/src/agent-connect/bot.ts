@@ -52,7 +52,7 @@ import {
 } from "./directoryBrowser.js";
 import { buildHistoryPage, parseHistoryCallbackData, sendHistory } from "./history.js";
 import { logger as sharedLogger } from "./logger.js";
-import { clearInteractiveMessage, getInteractiveWindow, handleInteractiveUi } from "./interactiveUi.js";
+import { clearInteractiveMessage, handleInteractiveUi } from "./interactiveUi.js";
 import {
   editTextWithFallback,
   replyWithFallback,
@@ -808,16 +808,20 @@ export async function textMessageHandler(
     return;
   }
 
-  // A TUI picker (/model, AskUserQuestion, a permission prompt…) mirrored to
-  // Telegram is open in this pane. Plain text sendKeys'd now is swallowed by
-  // the picker as keystrokes — and the trailing Enter confirms whatever item
-  // is highlighted (a /model picker once auto-selected a model this way while
-  // the user's message vanished). Worse, permission prompts react to bare
-  // y/n/digit keys, so leaked text can self-approve an action. Re-verify
-  // against a fresh capture first: interactiveModes can lag one status-poll
-  // tick behind the pane, and blocking on stale state would reject a
-  // perfectly deliverable message.
-  if (getInteractiveWindow(userId, threadId) === boundWindowId && tmuxManager.capturePane) {
+  // A TUI picker (/model, AskUserQuestion, a permission prompt…) may be open
+  // in this pane. Plain text sendKeys'd now is swallowed by the picker as
+  // keystrokes — and the trailing Enter confirms whatever item is highlighted
+  // (a /model picker twice auto-selected a model this way while the user's
+  // message vanished). Worse, permission prompts react to bare y/n/digit
+  // keys, so leaked text can self-approve an action.
+  //
+  // Always check a FRESH capture; do NOT gate on interactiveModes. The mode
+  // flag is written by statusPolling up to one poll tick (~2s) AFTER the
+  // picker renders, so a message racing the first tick — the common case:
+  // "/model" and the next sentence sent back-to-back — would bypass a
+  // flag-gated guard entirely and feed the picker. One tmux capture per
+  // inbound message is noise compared to the sendKeys round-trip.
+  if (tmuxManager.capturePane) {
     const paneText = await tmuxManager.capturePane(boundWindowId);
     if (paneText && isInteractiveUi(paneText)) {
       // Escape hatch for pickers that legitimately take typed input (the
@@ -897,9 +901,11 @@ export async function photoMessageHandler(
 
   // Same guard as textMessageHandler: with a TUI picker open, the
   // "(image attached: …)" text would be swallowed as picker keystrokes and
-  // its Enter would confirm the highlighted item. No passthrough for photos —
-  // there's no sensible way to type an image path into a picker field.
-  if (getInteractiveWindow(userId, threadId) === windowId && tmuxManager.capturePane) {
+  // its Enter would confirm the highlighted item. Fresh capture, not the
+  // interactiveModes flag — see the text handler for the race. No
+  // passthrough for photos — there's no sensible way to type an image path
+  // into a picker field.
+  if (tmuxManager.capturePane) {
     const paneText = await tmuxManager.capturePane(windowId);
     if (paneText && isInteractiveUi(paneText)) {
       await replyWithFallback(

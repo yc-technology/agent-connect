@@ -1360,12 +1360,15 @@ describe("bot text and picker flow", () => {
 });
 
 describe("interactive picker guard on inbound messages", () => {
-  // A real incident: a message sent while the /model picker was open got
-  // sendKeys'd into the picker — the text was swallowed as filter keystrokes
-  // and the trailing Enter confirmed the highlighted entry (silently
-  // switching models). The guard blocks plain text while a mirrored TUI
-  // picker is active, with a ">" prefix as explicit type-into-picker
-  // passthrough (no Enter).
+  // A real incident (twice in one day): a message sent while the /model
+  // picker was open got sendKeys'd into the picker — the text was swallowed
+  // as keystrokes and the trailing Enter confirmed the highlighted entry
+  // (silently switching models). The guard decides on a FRESH capturePane,
+  // never on the interactiveModes flag: statusPolling writes that flag up to
+  // one poll tick (~2s) after the picker renders, so a message racing the
+  // first tick would bypass a flag-gated guard — exactly how the second
+  // incident slipped past the first version of this guard. A ">" prefix is
+  // the explicit type-into-picker passthrough (no Enter).
   const PICKER_PANE = [
     " Do you want to proceed?",
     " ❯ 1. Yes",
@@ -1402,8 +1405,9 @@ describe("interactive picker guard on inbound messages", () => {
     };
   }
 
-  it("blocks plain text while a TUI picker is active and verified by fresh capture", async () => {
-    setInteractiveMode(12345, "@5", 42);
+  it("blocks plain text when the fresh capture shows a picker — even when interactiveModes hasn't been set yet (set-side race)", async () => {
+    // Deliberately NO setInteractiveMode: simulates the message that arrives
+    // between the picker rendering and statusPolling's first tick.
     const { sendToWindow, manager } = boundSessionManager();
     const ctx = ctxWithText("hello there");
 
@@ -1421,8 +1425,8 @@ describe("interactive picker guard on inbound messages", () => {
     );
   });
 
-  it("falls through and delivers normally when the picker state is stale (pane no longer interactive)", async () => {
-    setInteractiveMode(12345, "@5", 42);
+  it("falls through and delivers normally when the pane is not interactive, even with a stale interactiveModes flag", async () => {
+    setInteractiveMode(12345, "@5", 42); // stale flag must NOT cause a false block
     const { sendToWindow, manager } = boundSessionManager();
     const ctx = ctxWithText("hello there");
 
@@ -1437,7 +1441,6 @@ describe("interactive picker guard on inbound messages", () => {
   });
 
   it('types ">"-prefixed text into the picker without Enter instead of blocking', async () => {
-    setInteractiveMode(12345, "@5", 42);
     const { sendToWindow, manager } = boundSessionManager();
     const sendKeys = vi.fn(async () => true);
     const ctx = ctxWithText("> custom answer");
@@ -1454,9 +1457,9 @@ describe("interactive picker guard on inbound messages", () => {
     expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining("Typed into the picker"), expect.anything());
   });
 
-  it("does not consult tmux at all when no picker is tracked for the topic", async () => {
+  it("captures the pane for every inbound message and delivers when idle", async () => {
     const { sendToWindow, manager } = boundSessionManager();
-    const capturePane = vi.fn();
+    const capturePane = vi.fn(async () => IDLE_PANE);
     const ctx = ctxWithText("hello there");
 
     await textMessageHandler(ctx, config, manager, {
@@ -1466,12 +1469,11 @@ describe("interactive picker guard on inbound messages", () => {
       sendKeys: vi.fn()
     });
 
-    expect(capturePane).not.toHaveBeenCalled();
+    expect(capturePane).toHaveBeenCalledWith("@5");
     expect(sendToWindow).toHaveBeenCalledWith("@5", "hello there");
   });
 
   it("blocks photos while a TUI picker is active", async () => {
-    setInteractiveMode(12345, "@5", 42);
     const reply = vi.fn();
     const downloadPhoto = vi.fn();
     const sendToWindow = vi.fn();

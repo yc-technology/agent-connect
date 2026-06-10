@@ -364,18 +364,24 @@ them when refactoring.
 - **`UI_PATTERNS` scan is bottom-up.** `capturePane` includes 200
   lines of scrollback, so the LATEST occurrence of an interactive UI
   must win — top-down would lock onto a stale picker scrolled above.
-- **Inbound messages are guarded against active TUI pickers.** With a
-  mirrored picker open (`interactiveModes`), plain text sendKeys'd into
-  the pane is swallowed as picker keystrokes and its trailing Enter
-  confirms the highlighted item (June-10 incident: a message sent while
-  the `/model` picker was open silently selected a model and the text
-  vanished; permission prompts are worse — leaked `y`/digits
-  self-approve). `textMessageHandler` / `photoMessageHandler` re-verify
-  with a fresh `capturePane` + `isInteractiveUi` (the mode entry can lag
-  one poll tick), then refuse with guidance. A leading `>` is the
+- **Inbound messages are guarded against active TUI pickers — by fresh
+  capture, NEVER by the `interactiveModes` flag.** Plain text sendKeys'd
+  into an open picker is swallowed as keystrokes and its trailing Enter
+  confirms the highlighted item (June-10, twice: messages sent around
+  the `/model` picker silently selected a model and vanished; permission
+  prompts are worse — leaked `y`/digits self-approve). The first guard
+  version gated on `interactiveModes` and only used `capturePane` to
+  confirm — and got bypassed the same day: statusPolling writes that
+  flag up to one poll tick (~2s) AFTER the picker renders, so a message
+  racing the first tick skipped the guard entirely. The flag is a
+  Telegram-UI concern; delivery safety must come from a fresh
+  `capturePane` + `isInteractiveUi` on EVERY inbound message
+  (`textMessageHandler` / `photoMessageHandler`). A leading `>` is the
   explicit passthrough: types the rest into the picker WITHOUT Enter
   (for AskUserQuestion "Other" fields / filter typing); the user
-  confirms via the ⏎ button.
+  confirms via the ⏎ button. The live `/model` picker chrome is pinned
+  as a verbatim fixture in `terminalParser.test.ts` — if Claude Code
+  changes the UI, that test fails instead of the guard silently dying.
 
 ## Testing & runtime patterns
 
